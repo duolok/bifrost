@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/!azure/azure-sdk-for-go/sdk/internal/uuid"
 	"github.com/google/uuid"
 )
 
@@ -53,4 +52,3 @@ type TriggerDeployRequest struct {
 	CommitSHA string `json:"commit_sha" binding:"required,min=7,max=40"`
 	Branch    string `json:"branch"`
 }
-
