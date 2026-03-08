@@ -12,7 +12,7 @@ func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		traceID := c.GetHeader("X-Trac-ID")
+		traceID := c.GetHeader("X-Trace-ID")
 		if traceID == "" {
 			traceID = uuid.New().String()
 		}
