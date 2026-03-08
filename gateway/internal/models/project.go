@@ -7,6 +7,14 @@ import (
 	"github.com/google/uuid"
 )
 
+type ProjectStatus string
+
+const (
+	ProjectActive   ProjectStatus = "active"
+	ProjectPaused   ProjectStatus = "paused"
+	ProjectArchived ProjectStatus = "archived"
+)
+
 type Project struct {
 	ID            uuid.UUID        `json:"id"`
 	Name          string           `json:"name"`
@@ -14,7 +22,7 @@ type Project struct {
 	DefaultBranch string           `json:"default_branch"`
 	WebhookSecret string           `json:"-"`
 	Config        *json.RawMessage `json:"config,omitempty"`
-	Status        string           `json:"status"`
+	Status        ProjectStatus    `json:"status"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`
 }
