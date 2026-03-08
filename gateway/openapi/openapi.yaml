@@ -1,0 +1,468 @@
+openapi: 3.1.0
+info:
+  title: Bifrost Gateway API
+  description: API for managing projects and deployments on the Bifrost developer platform.
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      operationId: checkHealth
+      summary: Health check
+      description: Returns gateway health status including database connectivity and connection pool stats.
+      tags: [Health]
+      responses:
+        "200":
+          description: Gateway is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Gateway is degraded (database unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/project:
+    post:
+      operationId: createProject
+      summary: Create a project
+      description: |
+        Creates a new project linked to a GitHub repository.
+        The webhook_secret is returned only in this response — store it to configure GitHub webhooks.
+      tags: [Projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectWithSecret"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "409":
+          $ref: "#/components/responses/AlreadyExists"
+
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      summary: List projects
+      description: Returns all non-archived projects ordered by creation date (newest first).
+      tags: [Projects]
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Project"
+
+  /api/v1/project/{id}:
+    get:
+      operationId: getProject
+      summary: Get a project
+      tags: [Projects]
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteProject
+      summary: Delete a project
+      description: Soft-deletes a project by setting its status to archived. Archived projects are excluded from list results.
+      tags: [Projects]
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "204":
+          description: Project archived
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects/{id}/deploy:
+    post:
+      operationId: triggerDeploy
+      summary: Trigger a deployment
+      description: |
+        Creates a new deployment in queued state for the given project.
+        Idempotent — if a deployment for the same project+commit already exists, returns 409.
+      tags: [Deployments]
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerDeployRequest"
+      responses:
+        "201":
+          description: Deployment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/AlreadyExists"
+
+  /api/v1/projects/{id}/deployments:
+    get:
+      operationId: listDeployments
+      summary: List deployments for a project
+      description: Returns all deployments for the given project ordered by creation date (newest first).
+      tags: [Deployments]
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: List of deployments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deployments]
+                properties:
+                  deployments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Deployment"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+
+  /api/v1/deployments/{id}:
+    get:
+      operationId: getDeployment
+      summary: Get a deployment
+      tags: [Deployments]
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      responses:
+        "200":
+          description: Deployment found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/webhook/github:
+    post:
+      operationId: handleGitHubWebhook
+      summary: GitHub webhook receiver
+      description: |
+        Receives push events from GitHub. Verifies the HMAC-SHA256 signature against the
+        project's webhook_secret, then creates a deployment in queued state.
+        Duplicate deliveries (same project+commit) return 200 with already_processed status.
+      tags: [Webhooks]
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "HMAC-SHA256 signature in format: sha256=<hex>"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitHubPushEvent"
+      responses:
+        "200":
+          description: Webhook accepted or already processed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/WebhookAccepted"
+                  - $ref: "#/components/schemas/WebhookAlreadyProcessed"
+        "400":
+          $ref: "#/components/responses/InvalidInput"
+        "401":
+          description: Invalid HMAC signature
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: invalid signature
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    ProjectID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeploymentID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Project:
+      type: object
+      required: [id, name, repo_url, default_branch, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        repo_url:
+          type: string
+          format: uri
+        default_branch:
+          type: string
+        config:
+          type: object
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, archived]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectWithSecret:
+      description: Project with webhook_secret included (returned only on creation).
+      allOf:
+        - $ref: "#/components/schemas/Project"
+        - type: object
+          required: [webhook_secret]
+          properties:
+            webhook_secret:
+              type: string
+
+    CreateProjectRequest:
+      type: object
+      required: [name, repo_url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        repo_url:
+          type: string
+          format: uri
+        default_branch:
+          type: string
+          default: main
+
+    Deployment:
+      type: object
+      required: [id, project_id, commit_sha, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        commit_sha:
+          type: string
+          minLength: 7
+          maxLength: 40
+        branch:
+          type: string
+          nullable: true
+        triggered_by:
+          type: string
+          nullable: true
+        image_uri:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [queued, validating, building, built, deploying, running, healthy, failed]
+        status_message:
+          type: string
+          nullable: true
+        config_snapshot:
+          type: object
+          nullable: true
+        build_started_at:
+          type: string
+          format: date-time
+          nullable: true
+        build_finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        deploy_started_at:
+          type: string
+          format: date-time
+          nullable: true
+        deploy_finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    TriggerDeployRequest:
+      type: object
+      required: [commit_sha]
+      properties:
+        commit_sha:
+          type: string
+          minLength: 7
+          maxLength: 40
+        branch:
+          type: string
+
+    GitHubPushEvent:
+      type: object
+      properties:
+        ref:
+          type: string
+          example: refs/heads/main
+        after:
+          type: string
+          description: Commit SHA
+        repository:
+          type: object
+          properties:
+            clone_url:
+              type: string
+              format: uri
+            html_url:
+              type: string
+              format: uri
+        pusher:
+          type: object
+          properties:
+            name:
+              type: string
+
+    WebhookAccepted:
+      type: object
+      properties:
+        status:
+          type: string
+          example: accepted
+        deployment_id:
+          type: string
+          format: uuid
+
+    WebhookAlreadyProcessed:
+      type: object
+      properties:
+        status:
+          type: string
+          example: already_processed
+        commit_sha:
+          type: string
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        service:
+          type: string
+          example: bifrost-gateway
+        uptime:
+          type: string
+        database:
+          oneOf:
+            - type: object
+              properties:
+                status:
+                  type: string
+                  example: connected
+                total_conns:
+                  type: integer
+                idle_conns:
+                  type: integer
+            - type: string
+              example: unavailable
+
+    ErrorResponse:
+      type: object
+      required: [error, trace_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [NOT_FOUND, ALREADY_EXISTS, INVALID_INPUT, VALIDATION_FAILED, BUILD_FAILED, DEPLOY_FAILED, UPSTREAM_TIMEOUT, INTERNAL]
+            message:
+              type: string
+            details:
+              type: object
+        trace_id:
+          type: string
+          format: uuid
+
+  responses:
+    InvalidInput:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    AlreadyExists:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
