@@ -2,15 +2,17 @@ package apiutil
 
 import (
 	"crypto/rand"
-	"duolok/bifrost/gateway/internal/errors"
-	"duolok/bifrost/gateway/internal/middleware"
 	"encoding/hex"
 	"log/slog"
 
+	"duolok/bifrost/gateway/internal/errors"
+	"duolok/bifrost/gateway/internal/middleware"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-func respondError(c *gin.Context, err *errors.AppError) {
+func RespondError(c *gin.Context, err *errors.AppError) {
 	traceID := middleware.GetTraceID(c)
 
 	if err.Cause != nil {
@@ -25,10 +27,9 @@ func respondError(c *gin.Context, err *errors.AppError) {
 		"error":    err,
 		"trace_id": traceID,
 	})
-
 }
 
-func generateSecret(length int) (string, error) {
+func GenerateSecret(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
@@ -37,22 +38,20 @@ func generateSecret(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-func nilIfEmpty(s string) *string {
+func NilIfEmpty(s string) *string {
 	if s == "" {
 		return nil
 	}
 	return &s
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+// ParseID extracts a UUID path param, returning an error response on failure.
+// Returns the parsed UUID and true on success, or zero UUID and false on failure.
+func ParseID(c *gin.Context, param string, resource string) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param(param))
+	if err != nil {
+		RespondError(c, errors.InvalidInput("invalid "+resource+" ID"))
+		return uuid.UUID{}, false
 	}
-	return false
+	return id, true
 }
