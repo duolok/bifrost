@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +47,19 @@ var validTransitions = map[DeploymentStatus][]DeploymentStatus{
 	StatusRunning:    {StatusHealthy, StatusFailed},
 	StatusHealthy:    {StatusDeploying, StatusFailed},
 	StatusFailed:     {StatusQueued},
+}
+
+func CanTransition(from, to DeploymentStatus) bool {
+	targets, ok := validTransitions[from]
+	if !ok {
+		return false
+	}
+
+	if slices.Contains(targets, to) {
+		return true
+	}
+
+	return false
 }
 
 type TriggerDeployRequest struct {
