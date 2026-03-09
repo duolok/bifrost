@@ -66,6 +66,14 @@ func Internal(message string, cause error) *AppError {
 	}
 }
 
+func DeployFailed(message string, cause error) *AppError {
+	return &AppError{
+		Code:    ErrDeployFailed,
+		Message: message,
+		Cause:   cause,
+	}
+}
+
 func StatusCode(err *AppError) int {
 	switch err.Code {
 	case ErrNotFound:
