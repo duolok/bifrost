@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"duolok/bifrost/gateway/internal/api"
 	"duolok/bifrost/gateway/internal/db"
+	"duolok/bifrost/gateway/internal/k8s"
 )
 
 func main() {
@@ -30,7 +32,19 @@ func main() {
 	}
 	defer pool.Close()
 
-	router := api.NewRouter(pool)
+	// K8s deployer is optional — gateway works without it for local dev
+	var deployer *k8s.Deployer
+	deployer, err = k8s.NewDeployer(k8s.DeployConfig{
+		Namespace:  cfg.K8sNamespace,
+		InCluster:  cfg.K8sInCluster,
+		Kubeconfig: cfg.K8sKubeconfig,
+	}, pool)
+	if err != nil {
+		slog.Warn("k8s deployer unavailable, deploy endpoints disabled", "error", err)
+		deployer = nil
+	}
+
+	router := api.NewRouter(pool, deployer)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -59,16 +73,25 @@ func main() {
 }
 
 type GatewayConfig struct {
-	Port        string
-	Env         string
-	DatabaseURL string
+	Port           string
+	Env            string
+	DatabaseURL    string
+	K8sInCluster   bool
+	K8sKubeconfig  string
+	K8sNamespace   string
 }
 
 func loadConfig() GatewayConfig {
+	home, _ := os.UserHomeDir()
+	defaultKubeconfig := filepath.Join(home, ".kube", "config")
+
 	return GatewayConfig{
-		Port:        envOr("BF_PORT", "8080"),
-		Env:         envOr("BF_ENV", "dev"),
-		DatabaseURL: envOr("BF_DATABASE_URL", "postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable"),
+		Port:          envOr("BF_PORT", "8080"),
+		Env:           envOr("BF_ENV", "dev"),
+		DatabaseURL:   envOr("BF_DATABASE_URL", "postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable"),
+		K8sInCluster:  os.Getenv("BF_K8S_IN_CLUSTER") == "true",
+		K8sKubeconfig: envOr("BF_KUBECONFIG", defaultKubeconfig),
+		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
 	}
 }
 
