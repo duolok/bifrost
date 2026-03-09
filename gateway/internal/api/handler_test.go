@@ -26,7 +26,7 @@ func setupRouter(t *testing.T) http.Handler {
 	t.Helper()
 	pool := testutil.SetupTestDB(t)
 	testPool = pool
-	return api.NewRouter(pool)
+	return api.NewRouter(pool, nil)
 }
 
 func doJSON(router http.Handler, method, path string, body any) *httptest.ResponseRecorder {
