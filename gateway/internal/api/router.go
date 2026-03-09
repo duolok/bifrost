@@ -1,18 +1,19 @@
 package api
 
 import (
+	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(pool *pgxpool.Pool) *gin.Engine {
+func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	h := NewHandler(pool)
+	h := NewHandler(pool, deployer)
 
 	r.GET("/health", h.CheckHealth)
 	apiGroup := r.Group("/api/v1")
@@ -25,6 +26,7 @@ func NewRouter(pool *pgxpool.Pool) *gin.Engine {
 		apiGroup.POST("/projects/:id/deploy", h.TriggerDeploy)
 		apiGroup.GET("/projects/:id/deployments", h.ListDeployments)
 		apiGroup.GET("/deployments/:id", h.GetDeployment)
+		apiGroup.POST("/deployments/:id/deploy", h.DeployBuilt)
 
 		apiGroup.POST("/webhook/github", h.HandleGitHubWebhook)
 	}
