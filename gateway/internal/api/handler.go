@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"duolok/bifrost/gateway/internal/errors"
+	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
 	"duolok/bifrost/gateway/pkg/apiutil"
 
@@ -25,14 +26,16 @@ import (
 )
 
 type Handler struct {
-	pool    *pgxpool.Pool
-	startAt time.Time
+	pool     *pgxpool.Pool
+	deployer *k8s.Deployer
+	startAt  time.Time
 }
 
-func NewHandler(pool *pgxpool.Pool) *Handler {
+func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer) *Handler {
 	return &Handler{
-		pool:    pool,
-		startAt: time.Now(),
+		pool:     pool,
+		deployer: deployer,
+		startAt:  time.Now(),
 	}
 }
 
@@ -274,6 +277,92 @@ func (h *Handler) GetDeployment(c *gin.Context) {
 		apiutil.RespondError(c, errors.Internal("failed to get deployment", err))
 		return
 	}
+
+	c.JSON(http.StatusOK, d)
+}
+
+func (h *Handler) DeployBuilt(c *gin.Context) {
+	h.audit(c, auditDeployComplete, resourceDeployment, d.ID, gin.H{
+		"project": p.Name,
+	})
+	if h.deployer == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "k8s deployer not configured"})
+		return
+	}
+
+	id, ok := apiutil.ParseID(c, "id", resourceDeployment)
+	if !ok {
+		return
+	}
+
+	// Fetch the deployment
+	var d models.Deployment
+	err := h.pool.QueryRow(c.Request.Context(),
+		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
+		        status, status_message, config_snapshot,
+		        build_started_at, build_finished_at, deploy_started_at, deploy_finished_at, created_at
+		 FROM deployments
+		 WHERE id = $1`, id,
+	).Scan(
+		&d.ID, &d.ProjectID, &d.CommitSHA, &d.Branch, &d.TriggeredBy, &d.ImageURI,
+		&d.Status, &d.StatusMessage, &d.ConfigSnapshot,
+		&d.BuildStartedAt, &d.BuildFinishedAt, &d.DeployStartedAt, &d.DeployFinishedAt, &d.CreatedAt,
+	)
+	if err != nil {
+		if stderrors.Is(err, pgx.ErrNoRows) {
+			apiutil.RespondError(c, errors.NotFound(resourceDeployment, id))
+			return
+		}
+		apiutil.RespondError(c, errors.Internal("failed to get deployment", err))
+		return
+	}
+
+	if !models.CanTransition(d.Status, models.StatusDeploying) {
+		apiutil.RespondError(c, errors.InvalidInput(
+			"cannot deploy from status "+string(d.Status)+"; expected "+string(models.StatusBuilt),
+		))
+		return
+	}
+
+	if d.ImageURI == nil || *d.ImageURI == "" {
+		apiutil.RespondError(c, errors.InvalidInput("deployment has no image_uri; build must complete first"))
+		return
+	}
+
+	// Fetch the project
+	var p models.Project
+	err = h.pool.QueryRow(c.Request.Context(),
+		`SELECT id, name, repo_url, default_branch, config, status, created_at, updated_at
+		 FROM projects
+		 WHERE id = $1`, d.ProjectID,
+	).Scan(&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.Config, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		apiutil.RespondError(c, errors.Internal("failed to get project for deployment", err))
+		return
+	}
+
+	if err := h.deployer.Deploy(c.Request.Context(), d, p); err != nil {
+		h.audit(c, auditDeployFailed, resourceDeployment, d.ID, gin.H{"error": err.Error()})
+		apiutil.RespondError(c, errors.DeployFailed("k8s deployment failed", err))
+		return
+	}
+
+	h.audit(c, auditDeployComplete, resourceDeployment, d.ID, gin.H{
+		"project": p.Name,
+	})
+
+	// Re-fetch to get updated status and timestamps
+	h.pool.QueryRow(c.Request.Context(),
+		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
+		        status, status_message, config_snapshot,
+		        build_started_at, build_finished_at, deploy_started_at, deploy_finished_at, created_at
+		 FROM deployments
+		 WHERE id = $1`, id,
+	).Scan(
+		&d.ID, &d.ProjectID, &d.CommitSHA, &d.Branch, &d.TriggeredBy, &d.ImageURI,
+		&d.Status, &d.StatusMessage, &d.ConfigSnapshot,
+		&d.BuildStartedAt, &d.BuildFinishedAt, &d.DeployStartedAt, &d.DeployFinishedAt, &d.CreatedAt,
+	)
 
 	c.JSON(http.StatusOK, d)
 }
