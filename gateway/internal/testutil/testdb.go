@@ -87,7 +87,9 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 				"POSTGRES_PASSWORD": "test",
 				"POSTGRES_DB":       "bifrost_test",
 			},
-			WaitingFor: wait.ForListeningPort("5432/tcp").WithStartupTimeout(30 * time.Second),
+			WaitingFor: wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30 * time.Second),
 		},
 		Started: true,
 	})
