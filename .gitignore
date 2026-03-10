@@ -1,0 +1,15 @@
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# Go
+gateway/gateway
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
