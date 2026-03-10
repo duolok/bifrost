@@ -282,9 +282,6 @@ func (h *Handler) GetDeployment(c *gin.Context) {
 }
 
 func (h *Handler) DeployBuilt(c *gin.Context) {
-	h.audit(c, auditDeployComplete, resourceDeployment, d.ID, gin.H{
-		"project": p.Name,
-	})
 	if h.deployer == nil {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "k8s deployer not configured"})
 		return
