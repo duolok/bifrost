@@ -8,6 +8,9 @@ infra/.terraform*
 # Go
 gateway/gateway
 
+# Rust
+builder/target
+
 # Environment
 .env
 .env.*
