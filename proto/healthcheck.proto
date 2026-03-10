@@ -1,0 +1,17 @@
+syntax = "proto3";
+package bifrost.healthcheck;
+
+message HealthReport {
+  string pod_name = 1;
+  string deploy_id = 2;
+  bool tcp_healthy = 3;
+  double cpu_percent = 4;
+  int64 memory_bytes = 5;
+  int32 fd_count = 6;
+  int64 timestamp = 7;
+}
+
+service HealthReporter {
+  rpc StreamHealth (stream HealthReport) returns (Ack);
+}
+message Ack {}
