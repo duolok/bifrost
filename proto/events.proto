@@ -1,0 +1,19 @@
+syntax = "proto3";
+package bifrost.events;
+
+message PlatformEvent {
+  string event_type = 1;
+  string deploy_id = 2;
+  string project_name = 3;
+  string actor = 4;
+  string message = 5;
+  int64 timestamp = 6;
+  map<string, string> metadata = 7;
+}
+
+service EventIngress {
+  rpc SendEvent (PlatformEvent) returns (Ack);
+  rpc StreamBuildLogs (stream BuildLogLine) returns (Ack);
+}
+message BuildLogLine { string deploy_id = 1; string line = 2; int64 timestamp = 3; }
+message Ack {}
