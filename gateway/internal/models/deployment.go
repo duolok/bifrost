@@ -39,7 +39,7 @@ type Deployment struct {
 }
 
 var validTransitions = map[DeploymentStatus][]DeploymentStatus{
-	StatusQueued:     {StatusValidating, StatusFailed},
+	StatusQueued:     {StatusValidating, StatusBuilding, StatusFailed},
 	StatusValidating: {StatusBuilding, StatusFailed},
 	StatusBuilding:   {StatusBuilt, StatusFailed},
 	StatusBuilt:      {StatusDeploying, StatusFailed},
