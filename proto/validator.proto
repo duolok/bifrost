@@ -1,0 +1,27 @@
+syntax = "proto3";
+package bifrost.validator;
+
+message ValidateRequest { string config_raw = 1; }
+
+message ValidateResponse {
+  bool valid = 1;
+  ValidatedConfig config = 2;
+  repeated ValidationError errors = 3;
+}
+
+message ValidatedConfig {
+  AppConfig app = 1;
+  ScalingConfig scaling = 2;
+  HealthConfig health = 3;
+  ResourceConfig resources = 4;
+  map<string, EnvValue> env = 5;
+  RouteConfig routes = 6;
+}
+
+message AppConfig { string name = 1; string runtime = 2; }
+message ScalingConfig { int32 min_replicas = 1; int32 max_replicas = 2; int32 cpu_target_percent = 3; }
+message HealthConfig { string path = 1; int32 interval_seconds = 2; int32 timeout_seconds = 3; }
+message ResourceConfig { string cpu = 1; string memory = 2; }
+message EnvValue { oneof value { string plain = 1; string secret = 2; } }
+message RouteConfig { string lua_script = 1; }
+message ValidationError { string field = 1; string message = 2; int32 line = 3; }
