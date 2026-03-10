@@ -1,0 +1,30 @@
+syntax = "proto3";
+package bifrost.builder;
+
+message BuildRequest {
+  string deploy_id = 1;
+  string repo_url = 2;
+  string commit_sha = 3;
+  string dockerfile_path = 4;
+  bytes validated_config = 5;
+}
+
+message BuildComplete {
+  string deploy_id = 1;
+  string image_uri = 2;
+  bool success = 3;
+  string error_message = 4;
+}
+
+message BuildLogLine {
+  string deploy_id = 1;
+  string line = 2;
+  int64 timestamp = 3;
+  string stream = 4; // stdout | stderr
+}
+
+service BuilderEvents {
+  rpc StreamBuildLogs(stream BuildLogLine) returns (Ack);
+}
+
+message Ack {}
