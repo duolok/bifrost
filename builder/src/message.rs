@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Received from the "build-requests" Pub/Sub topic (published by Go gateway).
+/// Received from the "build-requests" Pub/Sub topic (published by gateway).
 #[derive(Debug, Deserialize)]
 pub struct BuildRequest {
     pub deploy_id: String,
@@ -10,7 +10,7 @@ pub struct BuildRequest {
     pub image_uri: String,
 }
 
-/// Published to the "build-complete" Pub/Sub topic (consumed by Go gateway).
+/// Published to the "build-complete" Pub/Sub topic (consumed by gateway).
 #[derive(Debug, Serialize)]
 pub struct BuildComplete {
     pub deploy_id: String,
