@@ -1,18 +1,28 @@
-use anyhow::Result;
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::config::Config;
+use crate::{buildkit, git};
 use crate::message::{BuildComplete, BuildRequest};
 
-/// Runs a single build job end-to-end.
-///
-/// 1. Create a temp directory under workspace_dir
-/// 2. git::clone_at_commit(repo_url, commit_sha, temp_dir)
-/// 3. buildkit::build_and_push(buildkitd_addr, temp_dir, image_uri)
-/// 4. Return BuildComplete::success or BuildComplete::failure
-/// 5. Clean up temp directory (even on error)
-///
-/// This function never returns Err — build failures are captured in BuildComplete.
 pub async fn run(cfg: &Config, req: BuildRequest) -> BuildComplete {
-    todo!()
+    let work_dir = PathBuf::from(&cfg.workspace_dir).join(&req.deploy_id);
+
+    let result = execute(cfg, &req, &work_dir).await;
+
+    let _ = tokio::fs::remove_dir_all(&work_dir).await;
+
+    match result {
+        Ok(()) => BuildComplete::success(&req.deploy_id, &req.image_uri),
+        Err(e) => BuildComplete::failure(&req.deploy_id, &e.to_string()),
+    }
+}
+
+async fn execute(cfg: &Config, req: &BuildRequest, work_dir: &PathBuf) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(work_dir).await?;
+
+    git::clone_at_commit(&req.repo_url, &req.commit_sha, work_dir).await?;
+
+    buildkit::build_and_push(&cfg.buildkitd_addr, work_dir, &req.image_uri).await?;
+
+    Ok(())
 }
