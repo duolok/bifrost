@@ -1,6 +1,5 @@
 mod buildkit;
 mod config;
-mod error;
 mod git;
 mod job;
 mod message;
