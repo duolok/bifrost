@@ -16,7 +16,7 @@ pub async fn clone_at_commit(repo_url: &str, commit_sha: &str, dest_dir: &Path) 
       .args(["-C", dest_dir.to_str().unwrap(), "checkout", commit_sha])
       .output().await?;
 
-    if checkout.status.success() {
+    if !checkout.status.success() {
         let stderr = String::from_utf8_lossy(&checkout.stderr);
         anyhow::bail!("git checkout failed: {}", stderr);
     }
