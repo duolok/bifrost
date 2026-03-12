@@ -1,22 +1,79 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use google_cloud_pubsub::client::{Publisher, Subscriber};
+use google_cloud_pubsub::model::Message;
 
 use crate::config::Config;
-use crate::message::{BuildComplete, BuildRequest};
+use crate::job;
+use crate::message::BuildRequest;
 
-/// Main loop: subscribe to build-requests, run jobs, publish build-complete.
-///
-/// 1. Create google_cloud_pubsub::client::Client (use ClientConfig::default().with_auth().await)
-/// 2. Get subscription handle (cfg.subscription)
-/// 3. Get topic handle for publishing (cfg.complete_topic)
-/// 4. Create a publisher from the topic
-/// 5. Loop: subscription.receive(|message, cancel| async { ... })
-///    a. Deserialize message.data as BuildRequest
-///    b. Call job::run(cfg, request) -> BuildComplete
-///    c. Serialize BuildComplete to JSON, publish to complete_topic
-///    d. Ack the message
-///
-/// On malformed messages: log error, ack (don't let them loop).
-/// On job failure: BuildComplete.success=false handles it, still ack.
 pub async fn run(cfg: Config) -> Result<()> {
-    todo!()
+    let cfg = Arc::new(cfg);
+
+    let sub_resource = format!(
+        "projects/{}/subscriptions/{}",
+        cfg.gcp_project, cfg.subscription
+    );
+    let topic_resource = format!(
+        "projects/{}/topics/{}",
+        cfg.gcp_project, cfg.complete_topic
+    );
+
+    let subscriber = Subscriber::builder().build().await?;
+    let publisher = Publisher::builder(&topic_resource).build().await?;
+
+    tracing::info!("listening for build requests");
+
+    let mut session = subscriber.streaming_pull(&sub_resource).start();
+
+    while let Some(result) = session.next().await {
+        let (msg, handle) = match result {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::error!(error = %e, "streaming pull error");
+                continue;
+            }
+        };
+
+        let data = msg.data.as_ref();
+
+        // Parse the build request
+        let req: BuildRequest = match serde_json::from_slice(data) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "malformed build request, acking to discard");
+                handle.ack();
+                continue;
+            }
+        };
+
+        tracing::info!(deploy_id = %req.deploy_id, project = %req.project_name, "build started");
+
+        let cfg = Arc::clone(&cfg);
+        let publisher = publisher.clone();
+
+        // Run the build
+        let result = job::run(&cfg, req).await;
+
+        tracing::info!(deploy_id = %result.deploy_id, success = result.success, "build finished");
+
+        // Publish build-complete
+        match serde_json::to_vec(&result) {
+            Ok(payload) => {
+                let pubsub_msg = Message::new().set_data(payload);
+                if let Err(e) = publisher.publish(pubsub_msg).await {
+                    tracing::error!(deploy_id = %result.deploy_id, error = %e, "failed to publish build-complete");
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::error!(deploy_id = %result.deploy_id, error = %e, "failed to serialize build-complete");
+            }
+        }
+
+        handle.ack();
+    }
+
+    Ok(())
 }
