@@ -4,6 +4,7 @@ use std::path::Path;
 
 pub async fn clone_at_commit(repo_url: &str, commit_sha: &str, dest_dir: &Path) -> Result<()> {
   let clone = Command::new("git")
+      .env("GIT_TERMINAL_PROMPT", "0")
       .args(["clone", "--depth=50", repo_url, dest_dir.to_str().unwrap()])
       .output().await?;
 
