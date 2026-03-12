@@ -23,3 +23,38 @@ pub async fn clone_at_commit(repo_url: &str, commit_sha: &str, dest_dir: &Path) 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_clone_at_commit() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("repo");
+
+        let result = clone_at_commit(
+            "https://github.com/rust-lang/log.git",
+            "43f2c283",
+            &dest,
+        ).await;
+
+        assert!(result.is_ok(), "clone failed: {:?}", result.err());
+        assert!(dest.join("Cargo.toml").exists(), "Cargo.toml should exist after clone");
+    }
+
+    #[tokio::test]
+    async fn test_clone_bad_commit() {
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("repo");
+
+        let result = clone_at_commit(
+            "https://github.com/rust-lang/log.git",
+            "0000000000000000000000000000000000000000",
+            &dest,
+        ).await;
+
+        assert!(result.is_err(), "should fail on nonexistent commit");
+    }
+}
