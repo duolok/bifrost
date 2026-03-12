@@ -3,7 +3,7 @@ use std::env;
 
 pub struct Config {
     pub gcp_project: String,
-    pub subscription: String,          // Pub/Sub subscription for build-requests
+    pub subscription: String,           // Pub/Sub subscription for build-requests
     pub complete_topic: String,         // Pub/Sub topic for build-complete
     pub buildkitd_addr: String,         // buildkitd socket address
     pub workspace_dir: String,          // temp dir for git clones
