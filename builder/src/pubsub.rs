@@ -55,10 +55,8 @@ pub async fn run(cfg: Config) -> Result<()> {
 
         // Run the build
         let result = job::run(&cfg, req).await;
-
         tracing::info!(deploy_id = %result.deploy_id, success = result.success, "build finished");
 
-        // Publish build-complete
         match serde_json::to_vec(&result) {
             Ok(payload) => {
                 let pubsub_msg = Message::new().set_data(payload);
