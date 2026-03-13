@@ -13,6 +13,7 @@ import (
 	"duolok/bifrost/gateway/internal/api"
 	"duolok/bifrost/gateway/internal/db"
 	"duolok/bifrost/gateway/internal/k8s"
+	"duolok/bifrost/gateway/internal/pubsub"
 )
 
 func main() {
@@ -23,7 +24,8 @@ func main() {
 	slog.SetDefault(logger)
 	cfg := loadConfig()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -44,7 +46,31 @@ func main() {
 		deployer = nil
 	}
 
-	router := api.NewRouter(pool, deployer)
+	var publisher *pubsub.Publisher
+	if cfg.GCPProject != "" {
+		publisher, err = pubsub.NewPublisher(ctx, cfg.GCPProject, "build-requests", cfg.ARRepo)
+		if err != nil {
+			slog.Warn("pubsub publisher unavailable, build requests won't be published", "error", err)
+			publisher = nil
+		} else {
+			defer publisher.Stop()
+		}
+	}
+
+	if cfg.GCPProject != "" {
+		sub, err := pubsub.NewSubscriber(ctx, pool, deployer, cfg.GCPProject, "gateway-build-complete")
+		if err != nil {
+			slog.Warn("pubsub subscriber unavailable", "error", err)
+		} else {
+			go func() {
+				if err := sub.Start(ctx); err != nil {
+					slog.Error("build-complete subscriber stopped", "error", err)
+				}
+			}()
+		}
+	}
+
+	router := api.NewRouter(pool, deployer, publisher)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -64,8 +90,10 @@ func main() {
 	<-quit
 	slog.Info("shutting down gateway")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	cancel() // Stop subscriber
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("forced shutdown", "error", err)
 	}
@@ -73,12 +101,14 @@ func main() {
 }
 
 type GatewayConfig struct {
-	Port           string
-	Env            string
-	DatabaseURL    string
-	K8sInCluster   bool
-	K8sKubeconfig  string
-	K8sNamespace   string
+	Port          string
+	Env           string
+	DatabaseURL   string
+	GCPProject    string
+	ARRepo        string
+	K8sInCluster  bool
+	K8sKubeconfig string
+	K8sNamespace  string
 }
 
 func loadConfig() GatewayConfig {
@@ -89,6 +119,8 @@ func loadConfig() GatewayConfig {
 		Port:          envOr("BF_PORT", "8080"),
 		Env:           envOr("BF_ENV", "dev"),
 		DatabaseURL:   envOr("BF_DATABASE_URL", "postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable"),
+		GCPProject:    os.Getenv("BF_GCP_PROJECT"),
+		ARRepo:        os.Getenv("BF_AR_REPO"),
 		K8sInCluster:  os.Getenv("BF_K8S_IN_CLUSTER") == "true",
 		K8sKubeconfig: envOr("BF_KUBECONFIG", defaultKubeconfig),
 		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
