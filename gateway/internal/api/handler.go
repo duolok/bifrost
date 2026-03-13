@@ -16,6 +16,7 @@ import (
 	"duolok/bifrost/gateway/internal/errors"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
+	"duolok/bifrost/gateway/internal/pubsub"
 	"duolok/bifrost/gateway/pkg/apiutil"
 
 	"github.com/gin-gonic/gin"
@@ -26,16 +27,18 @@ import (
 )
 
 type Handler struct {
-	pool     *pgxpool.Pool
-	deployer *k8s.Deployer
-	startAt  time.Time
+	pool      *pgxpool.Pool
+	deployer  *k8s.Deployer
+	publisher *pubsub.Publisher
+	startAt   time.Time
 }
 
-func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer) *Handler {
+func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher) *Handler {
 	return &Handler{
-		pool:     pool,
-		deployer: deployer,
-		startAt:  time.Now(),
+		pool:      pool,
+		deployer:  deployer,
+		publisher: publisher,
+		startAt:   time.Now(),
 	}
 }
 
@@ -215,6 +218,16 @@ func (h *Handler) TriggerDeploy(c *gin.Context) {
 		"commit_sha": req.CommitSHA,
 	})
 
+	// Publish build request if publisher is configured
+	if h.publisher != nil {
+		var projectName, repoURL string
+		_ = h.pool.QueryRow(c.Request.Context(),
+			`SELECT name, repo_url FROM projects WHERE id = $1`, projectID,
+		).Scan(&projectName, &repoURL)
+
+		h.publishBuild(c, d.ID, projectName, repoURL, req.CommitSHA)
+	}
+
 	c.JSON(http.StatusCreated, d)
 }
 
@@ -326,7 +339,6 @@ func (h *Handler) DeployBuilt(c *gin.Context) {
 		return
 	}
 
-	// Fetch the project
 	var p models.Project
 	err = h.pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, repo_url, default_branch, config, status, created_at, updated_at
@@ -348,7 +360,6 @@ func (h *Handler) DeployBuilt(c *gin.Context) {
 		"project": p.Name,
 	})
 
-	// Re-fetch to get updated status and timestamps
 	h.pool.QueryRow(c.Request.Context(),
 		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
 		        status, status_message, config_snapshot,
@@ -389,7 +400,6 @@ func (h *Handler) HandleGitHubWebhook(c *gin.Context) {
 		return
 	}
 
-	// Look up project by repo URL (try both clone_url and without .git suffix)
 	repoURL := event.Repository.CloneURL
 	var p models.Project
 	err = h.pool.QueryRow(c.Request.Context(),
@@ -433,7 +443,6 @@ func (h *Handler) HandleGitHubWebhook(c *gin.Context) {
 
 	if err != nil {
 		if stderrors.Is(err, pgx.ErrNoRows) {
-			// Duplicate webhook delivery — return success (GitHub expects 2xx)
 			c.JSON(http.StatusOK, gin.H{"status": "already_processed", "commit_sha": commitSHA})
 			return
 		}
@@ -446,10 +455,43 @@ func (h *Handler) HandleGitHubWebhook(c *gin.Context) {
 		"branch":     branch,
 	})
 
+	if h.publisher != nil {
+		h.publishBuild(c, d.ID, p.Name, p.RepoURL, commitSHA)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "accepted",
 		"deployment_id": d.ID,
 	})
+}
+
+func (h *Handler) publishBuild(c *gin.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
+	ctx := c.Request.Context()
+
+	_, err := h.pool.Exec(ctx,
+		`UPDATE deployments SET status = $1, build_started_at = NOW() WHERE id = $2 AND status = $3`,
+		models.StatusBuilding, deployID, models.StatusQueued,
+	)
+	if err != nil {
+		slog.Error("failed to transition to building", "deploy_id", deployID, "error", err)
+		return
+	}
+
+	req := pubsub.BuildRequest{
+		DeployID:    deployID.String(),
+		ProjectName: projectName,
+		RepoURL:     repoURL,
+		CommitSHA:   commitSHA,
+		ImageURI:    h.publisher.ImageURI(projectName, commitSHA),
+	}
+
+	if err := h.publisher.PublishBuildRequest(ctx, req); err != nil {
+		slog.Error("failed to publish build request", "deploy_id", deployID, "error", err)
+		h.pool.Exec(ctx,
+			`UPDATE deployments SET status = $1, build_started_at = NULL WHERE id = $2`,
+			models.StatusQueued, deployID,
+		)
+	}
 }
 
 func (h *Handler) CheckHealth(c *gin.Context) {
