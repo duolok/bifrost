@@ -44,7 +44,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--set-env-vars'
-      - 'BF_ENV=prod,BF_K8S_IN_CLUSTER=false'
+      - 'BF_ENV=prod,BF_K8S_IN_CLUSTER=false,BF_GCP_PROJECT=$PROJECT_ID,BF_AR_REPO=${_REGION}-docker.pkg.dev/$PROJECT_ID/bifrost-apps'
       - '--add-cloudsql-instances'
       - '${_DB_CONNECTION_NAME}'
       - '--set-env-vars'
