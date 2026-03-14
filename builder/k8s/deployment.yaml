@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-builder
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-builder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-builder
+  template:
+    metadata:
+      labels:
+        app: bifrost-builder
+    spec:
+      serviceAccountName: bifrost-builder
+      containers:
+        - name: builder
+          image: europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/builder:latest
+          env:
+            - name: GCP_PROJECT
+              value: "bifrost-platform"
+            - name: PUBSUB_SUBSCRIPTION
+              value: "builder-subscription"
+            - name: PUBSUB_COMPLETE_TOPIC
+              value: "build-complete"
+            - name: WORKSPACE_DIR
+              value: "/tmp/builder"
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: workspace
+              mountPath: /tmp/builder
+      volumes:
+        - name: workspace
+          emptyDir: {}
