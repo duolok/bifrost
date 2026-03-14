@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-gateway
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-gateway
+  template:
+    metadata:
+      labels:
+        app: bifrost-gateway
+    spec:
+      serviceAccountName: bifrost-gateway
+      containers:
+        - name: gateway
+          image: europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/gateway:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: BF_PORT
+              value: "8080"
+            - name: BF_ENV
+              value: "prod"
+            - name: BF_DATABASE_URL
+              value: "host=34.116.190.78 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
+            - name: BF_GCP_PROJECT
+              value: "bifrost-platform"
+            - name: BF_AR_REPO
+              value: "europe-central2-docker.pkg.dev/bifrost-platform/bifrost-apps"
+            - name: BF_K8S_IN_CLUSTER
+              value: "true"
+            - name: BF_K8S_NAMESPACE
+              value: "bifrost-apps"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
