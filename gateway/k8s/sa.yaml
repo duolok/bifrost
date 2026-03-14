@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bifrost-gateway
+  namespace: bifrost-apps
+  annotations:
+    iam.gke.io/gcp-service-account: bifrost-gateway@bifrost-platform.iam.gserviceaccount.com
