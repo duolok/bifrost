@@ -85,6 +85,5 @@ cloud-deploy:
 	@echo "==> Deployed. URL:"
 	@gcloud run services describe bifrost-gateway --region=$(GCP_REGION) --format='value(status.url)'
 
-# Connect to Cloud SQL
 cloud-psql:
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost
