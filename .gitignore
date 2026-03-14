@@ -17,3 +17,5 @@ builder/target
 
 # OS
 .DS_Store
+google-cloud-sdk/
+google-cloud-cli-linux-x86_64.tar.gz
