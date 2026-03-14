@@ -34,56 +34,85 @@ infra-plan:
 infra-apply:
 	cd infra && terraform apply -var="project_id=bifrost-platform" -var="db_password=BfrostPg2026x"
 
+# --- Cloud variables ---
+
 GCP_PROJECT  := bifrost-platform
 GCP_REGION   := europe-central2
 REGISTRY     := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bifrost-platform
 GATEWAY_IMG  := $(REGISTRY)/gateway:latest
-DB_IP        := $(shell terraform -chdir=infra output -raw db_ip 2>/dev/null)
-CLOUD_RUN_URL = $(shell gcloud run services describe bifrost-gateway --region=$(GCP_REGION) --format='value(status.url)' 2>/dev/null)
+BUILDER_IMG  := $(REGISTRY)/builder:latest
+GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
+# Spin up everything: infra → migrate → build → deploy to GKE
 cloud-up:
+	@echo "==> Applying Terraform..."
 	cd infra && terraform apply -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
+	@echo "==> Getting kubectl credentials..."
 	gcloud container clusters get-credentials bifrost-cluster --region $(GCP_REGION) --project $(GCP_PROJECT)
 	kubectl create namespace bifrost-apps 2>/dev/null || true
+	@echo "==> Running migrations..."
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost -f scripts/migrations/001_init.sql 2>/dev/null || echo "Tables already exist"
+	@echo "==> Building and pushing gateway..."
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
-	gcloud run deploy bifrost-gateway \
-		--image $(GATEWAY_IMG) \
-		--region $(GCP_REGION) \
-		--platform managed \
-		--set-env-vars "BF_ENV=prod,BF_GCP_PROJECT=$(GCP_PROJECT),BF_AR_REPO=$(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bifrost-apps,BF_DATABASE_URL=host=$$(terraform -chdir=infra output -raw db_ip) user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable" \
-		--allow-unauthenticated \
-		--min-instances 0 --max-instances 3 \
-		--memory 256Mi --cpu 1 --timeout 300s
-	@gcloud run services describe bifrost-gateway --region=$(GCP_REGION) --format='value(status.url)'
+	@echo "==> Building and pushing builder..."
+	docker build -t $(BUILDER_IMG) builder/
+	docker push $(BUILDER_IMG)
+	@echo "==> Deploying to GKE..."
+	kubectl apply -f gateway/k8s/sa.yaml
+	kubectl apply -f gateway/k8s/rbac.yaml
+	kubectl apply -f gateway/k8s/deployment.yaml
+	kubectl apply -f gateway/k8s/service.yaml
+	kubectl apply -f builder/k8s/sa.yaml
+	kubectl apply -f builder/k8s/deployment.yaml
+	@echo "==> Waiting for gateway external IP..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
+		IP=$$(kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null); \
+		if [ -n "$$IP" ]; then echo "==> Gateway: http://$$IP/health"; exit 0; fi; \
+		sleep 10; \
+	done; echo "==> IP not assigned yet, check: kubectl get svc -n bifrost-apps"
 
+# Tear down everything
 cloud-down:
-	gcloud run services delete bifrost-gateway --region=$(GCP_REGION) --quiet 2>/dev/null || true
+	@echo "==> Deleting GKE workloads..."
+	kubectl delete -f builder/k8s/deployment.yaml 2>/dev/null || true
+	kubectl delete -f gateway/k8s/deployment.yaml 2>/dev/null || true
+	kubectl delete -f gateway/k8s/service.yaml 2>/dev/null || true
+	kubectl delete -f gateway/k8s/rbac.yaml 2>/dev/null || true
+	kubectl delete -f gateway/k8s/sa.yaml 2>/dev/null || true
+	kubectl delete -f builder/k8s/sa.yaml 2>/dev/null || true
+	@echo "==> Removing GKE cluster from Terraform state (deletion_protection workaround)..."
+	cd infra && terraform state rm google_container_cluster.primary 2>/dev/null || true
+	@echo "==> Deleting GKE cluster directly..."
+	gcloud container clusters delete bifrost-cluster --region $(GCP_REGION) --quiet 2>/dev/null || true
+	@echo "==> Destroying remaining Terraform resources..."
 	cd infra && terraform destroy -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
+	@echo "==> Done. All cloud resources destroyed."
 
 cloud-status:
-	@echo "=== Cloud Run ==="
-	@gcloud run services describe bifrost-gateway --region=$(GCP_REGION) --format='table(status.url,status.conditions[0].status)' 2>/dev/null || echo "Not deployed"
+	@echo "=== GKE Pods ==="
+	@kubectl get pods -n bifrost-apps 2>/dev/null || echo "Not available"
 	@echo ""
-	@echo "=== GKE Cluster ==="
-	@gcloud container clusters describe bifrost-cluster --region=$(GCP_REGION) --format='table(status,currentNodeCount)' 2>/dev/null || echo "Not running"
+	@echo "=== GKE Services ==="
+	@kubectl get svc -n bifrost-apps 2>/dev/null || echo "Not available"
 	@echo ""
 	@echo "=== Cloud SQL ==="
 	@gcloud sql instances describe bifrost-db --format='table(state,ipAddresses[0].ipAddress)' 2>/dev/null || echo "Not running"
 	@echo ""
 	@echo "=== Health Check ==="
-	@curl -s $(CLOUD_RUN_URL)/health 2>/dev/null | jq . || echo "Gateway not reachable"
+	@curl -s http://$(GATEWAY_URL)/health 2>/dev/null | jq . || echo "Gateway not reachable"
 
+# Build and deploy both services (no infra changes)
 cloud-deploy:
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
-	gcloud run deploy bifrost-gateway \
-		--image $(GATEWAY_IMG) \
-		--region $(GCP_REGION) \
-		--platform managed
-	@echo "==> Deployed. URL:"
-	@gcloud run services describe bifrost-gateway --region=$(GCP_REGION) --format='value(status.url)'
+	docker build -t $(BUILDER_IMG) builder/
+	docker push $(BUILDER_IMG)
+	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
+	@echo "==> Deployed. Waiting for rollout..."
+	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=120s
+	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=120s
 
 cloud-psql:
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost
