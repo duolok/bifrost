@@ -13,8 +13,6 @@ FROM alpine:3.21
 
 RUN apk add --no-cache git ca-certificates
 
-COPY --from=moby/buildkit:v0.21 /usr/bin/buildctl /usr/bin/buildctl
-
 COPY --from=builder /app/target/release/builder /usr/local/bin/builder
 
 RUN adduser -D -u 1000 builder
