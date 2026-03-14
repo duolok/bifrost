@@ -22,7 +22,13 @@ async fn execute(cfg: &Config, req: &BuildRequest, work_dir: &PathBuf) -> anyhow
 
     git::clone_at_commit(&req.repo_url, &req.commit_sha, work_dir).await?;
 
-    buildkit::build_and_push(&cfg.buildkitd_addr, work_dir, &req.image_uri).await?;
+    buildkit::build_and_push(
+        &cfg.gcp_project,
+        work_dir,
+        &req.repo_url,
+        &req.commit_sha,
+        &req.image_uri,
+    ).await?;
 
     Ok(())
 }
@@ -39,13 +45,12 @@ mod tests {
             gcp_project: "test".into(),
             subscription: "test".into(),
             complete_topic: "test".into(),
-            buildkitd_addr: "unix:///nonexistent.sock".into(),
             workspace_dir: workspace.into(),
         }
     }
 
     #[tokio::test]
-    async fn test_job_clone_succeeds_buildkit_fails() {
+    async fn test_job_clone_succeeds_build_fails() {
         let tmp = TempDir::new().unwrap();
         let cfg = test_config(tmp.path().to_str().unwrap());
 
