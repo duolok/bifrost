@@ -43,5 +43,7 @@ resource "google_container_cluster" "primary" {
 
   ip_allocation_policy {}
 
+  deletion_protection = false
+
   depends_on = [google_project_service.apis]
 }
