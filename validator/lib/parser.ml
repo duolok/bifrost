@@ -131,6 +131,23 @@ let parse_resources table =
             | [] -> Ok { cpu = Option.get cpu; memory = Option.get memory }
             | _ -> Error errors
 
+
+let parse_routes table = 
+    match get_table "routes" table with 
+    | None -> Ok None
+    | Some t -> 
+        let errors = [] in 
+        let lua_script = get_string "lua_script" t in 
+        
+        let errors = match lua_script with
+            | None -> {field = "lua_script"; message = "lua script does not exist"; line = 1 } :: errors
+            | Some _ -> errors
+        in
+
+        match errors with
+        | [] -> Ok (Some ({ lua_script = Option.get lua_script }))
+        | _ -> Error errors
+
 let parse (raw: string) : validation_result = 
     match Toml.Parser.from_string raw with
     | `Error (msg, _loc) -> 
