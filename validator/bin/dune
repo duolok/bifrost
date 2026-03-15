@@ -1,0 +1,4 @@
+(executable
+ (name main)
+ (public_name bifrost_validator_server)
+ (libraries bifrost_validator cohttp-lwt-unix lwt yojson))
