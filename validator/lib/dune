@@ -1,0 +1,4 @@
+(library
+ (name bifrost_validator)
+ (libraries toml yojson)
+ (preprocess (pps ppx_deriving)))
