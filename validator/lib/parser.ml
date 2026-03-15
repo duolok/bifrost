@@ -177,5 +177,32 @@ let parse (raw: string) : validation_result =
     | `Error (msg, _loc) -> 
       Invalid [{ field = "toml"; message = msg; line = 0 }]
     | `Ok table ->
-      (* TODO: call parse_app, parse_scaling, etc. and combine results *)
+        let app = parse_app table in
+        let scaling = parse_scaling table in
+        let health = parse_health table in
+        let resources = parse_resources table in
+        let env = parse_env table in
+        let routes = parse_routes table in
+
+        let errors = 
+            (match app with Error e -> e  | Ok _ -> [])
+            @ (match scaling with Error e -> e | Ok _ -> [])
+            @ (match health with Error e -> e | Ok _ -> [])
+            @ (match resources with Error e -> e | Ok _ -> [])
+            @ (match env with Error e -> e | Ok _ -> [])
+            @ (match routes with Error e -> e | Ok _ -> [])
+        in
+
+        match errors with 
+            | [] -> 
+                let get_ok r = match r with Ok v -> v | Error _ -> assert false in
+                Valid {
+                    app = get_ok app;
+                    scaling = get_ok scaling;
+                    health = get_ok health;
+                    resources = get_ok resources;
+                    env = get_ok env;
+                    routes = get_ok routes;
+                }
+            | _ -> Invalid errors
 ;;
