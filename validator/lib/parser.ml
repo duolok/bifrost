@@ -61,6 +61,48 @@ let parse_scaling table =
             | [] -> Ok { min_replicas = Option.get min_replicas; max_replicas = Option.get max_replicas; cpu_target = Option.get cpu_target }
             | _ -> Error errors
 
+(* Replaces string duration with a \0 *)
+let parse_duration s =
+    let len = String.length s  in
+    if len > 1 && s.[len-1] = 's' then
+        int_of_string_opt(String.sub s 0 (len-1))
+    else
+        None
+
+let parse_health table =
+    match get_table "health" table with 
+        | None -> Error [{ field = "health"; message = "health is required"; line = 0 }]
+        | Some t -> 
+            let errors = [] in
+            let path = get_string "path" t in
+            
+            let get_duration key table =
+                match get_string key table with 
+                | Some s -> parse_duration s
+                | None -> None
+            in
+
+            let interval = get_duration "interval" t in
+            let timeout = get_duration "timeout" t in
+
+            let errors = match path with 
+                | None -> {field = "path"; message = "path does not exist"; line = 1} :: errors
+                | Some _ -> errors
+            in
+            let errors = match interval with 
+                | None -> {field = "interval"; message = "interval does not exist"; line = 1} :: errors
+                | Some _ -> errors
+            in
+            let errors = match timeout with 
+                | None -> {field = "timeout"; message = "timeout does not exist"; line = 1} :: errors
+                | Some _ -> errors
+            in
+
+            match errors with
+            | [] -> Ok { path = Option.get path; interval_seconds = Option.get interval; timeout_seconds = Option.get timeout }
+            | _ -> Error errors
+        
+
 let parse (raw: string) : validation_result = 
     match Toml.Parser.from_string raw with
     | `Error (msg, _loc) -> 
