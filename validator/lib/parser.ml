@@ -134,19 +134,43 @@ let parse_resources table =
 
 let parse_routes table = 
     match get_table "routes" table with 
-    | None -> Ok None
-    | Some t -> 
-        let errors = [] in 
-        let lua_script = get_string "lua_script" t in 
-        
-        let errors = match lua_script with
-            | None -> {field = "lua_script"; message = "lua script does not exist"; line = 1 } :: errors
-            | Some _ -> errors
-        in
+        | None -> Ok None
+        | Some t -> 
+            let errors = [] in 
+            let lua_script = get_string "lua_script" t in 
+            
+            let errors = match lua_script with
+                | None -> {field = "lua_script"; message = "lua script does not exist"; line = 1 } :: errors
+                | Some _ -> errors
+            in
 
-        match errors with
-        | [] -> Ok (Some ({ lua_script = Option.get lua_script }))
-        | _ -> Error errors
+            match errors with
+            | [] -> Ok (Some ({ lua_script = Option.get lua_script }))
+            | _ -> Error errors
+
+let parse_env table = 
+    match get_table "env" table with
+        | None -> Ok []
+        | Some t -> 
+            let (envs, errors) = 
+                Toml.Types.Table.fold (fun key value (envs, errors) ->
+                    let name = Toml.Types.Table.Key.to_string key in
+                    match value with 
+                        | Toml.Types.TString s ->
+                            ((name, Plain s) :: envs, errors)
+                        | Toml.Types.TTable inner ->
+                            (match get_string "secret" inner with
+                                | Some s -> ((name, Secret s) :: envs, errors)
+                                | None -> (envs, {field = "env." ^ name; message = "inline table must have 'secret' key"; line = 0} :: errors))
+                        | _ -> 
+                            (envs, { field = "env." ^ name; message = "must be a string or { secret = \"...\" }"; line = 0 } :: errors)
+                        ) t ([], [])
+
+            in
+
+            match errors with 
+            | [] -> Ok envs
+            | _ -> Error errors
 
 let parse (raw: string) : validation_result = 
     match Toml.Parser.from_string raw with
