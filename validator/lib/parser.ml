@@ -108,7 +108,28 @@ let parse_health table =
             match errors with
             | [] -> Ok { path = Option.get path; interval_seconds = Option.get interval; timeout_seconds = Option.get timeout }
             | _ -> Error errors
-        
+
+let parse_resources table =
+    match get_table "resources" table with
+        | None -> Error [{ field = "resources"; message = "health is required"; line = 0 }]
+        | Some t -> 
+            let errors = [] in
+            let cpu = get_string "cpu" t in
+            let memory = get_string "memory" t in
+
+            let errors = match cpu with
+                | None -> {field = "cpu"; message = "cpu does not exist"; line = 1 } :: errors
+                | Some _ -> errors
+            in
+
+            let errors = match memory with
+                | None -> {field = "memory"; message = "memory does not exist"; line = 1 } :: errors
+                | Some _ -> errors
+            in
+
+            match errors with 
+            | [] -> Ok { cpu = Option.get cpu; memory = Option.get memory }
+            | _ -> Error errors
 
 let parse (raw: string) : validation_result = 
     match Toml.Parser.from_string raw with
