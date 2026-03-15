@@ -11,6 +11,9 @@ gateway/gateway
 # Rust
 builder/target
 
+# OCaml
+validator/_build
+
 # Environment
 .env
 .env.*
