@@ -3,8 +3,11 @@ open Config
 let is_dns_char c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '-'
 ;;
 
-let available_runtimes = ["rust"; "go"; "elixir"; "python"; "zig"; "ocaml"; "node"]
+let is_env_char c = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_'
 ;;
+
+let available_runtimes = ["rust"; "go"; "elixir"; "python"; "zig"; "ocaml"; "node"]
+let k8s_memory_formats = ["Mi"; "Gi"]
 
 let validate_app_name (cfg : validated_config) =
   let name = cfg.app.name in
@@ -52,3 +55,38 @@ let validate_health (cfg: validated_config) =
   ) checks
 ;;
 
+let validate_resources (cfg: validated_config) =
+  let r = cfg.resources in
+  let is_valid_cpu c =
+    if String.ends_with ~suffix:"m" c then 
+      let num = String.sub c 0 (String.length c - 1) in
+      match int_of_string_opt num with 
+      | Some n -> n > 0
+      | None -> false
+    else 
+      match int_of_string_opt c with
+      |Some n -> n > 0
+      | None -> false
+  in
+
+  let is_valid_memory m =
+    List.exists (fun suffix ->
+    if String.ends_with ~suffix m then
+      let num = String.sub m 0 (String.length m  - String.length suffix) in
+      match int_of_string_opt num with
+      | Some n -> n > 0
+      | None -> false
+    else
+      false
+  ) k8s_memory_formats
+  in
+
+  let checks = [
+    (not(is_valid_memory r.memory), "resources.memory", "memory is not valid");
+    (not(is_valid_cpu r.cpu), "resources.cpu", "cpu is not valid");
+  ] in
+  List.filter_map ( fun (failed, field, message) ->
+    if failed then Some { field; message; line =0 }
+    else None
+  ) checks
+;;
