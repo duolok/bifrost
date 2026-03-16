@@ -105,3 +105,16 @@ let validate_env (cfg: validated_config) =
     ) checks
   ) cfg.env
 ;;
+
+let validate (cfg: validated_config) =
+  let errors =
+   validate_app_name cfg
+      @ validate_app_runtime cfg
+      @ validate_scaling cfg
+      @ validate_health cfg
+      @ validate_resources cfg
+      @ validate_env cfg
+    in match errors with
+    | [] -> Valid cfg
+    | _ -> Invalid errors
+;;
