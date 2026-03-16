@@ -86,7 +86,22 @@ let validate_resources (cfg: validated_config) =
     (not(is_valid_cpu r.cpu), "resources.cpu", "cpu is not valid");
   ] in
   List.filter_map ( fun (failed, field, message) ->
-    if failed then Some { field; message; line =0 }
+    if failed then Some { field; message; line = 0 }
     else None
   ) checks
+;;
+
+let validate_env (cfg: validated_config) =
+  List.concat_map (fun (key, _) ->
+    let field = "env." ^ key in
+    let checks = [
+      (String.length key = 0, "must not be empty");
+      (key.[0] >= '0' && key.[0] <= '9', "must not start with a digit");
+      (not (String.for_all is_env_char key), "must contain only uppercase letters, digits or underscores");
+    ] in
+    List.filter_map (fun(failed, message) ->
+      if failed then Some { field; message; line =0 }
+      else None
+    ) checks
+  ) cfg.env
 ;;
