@@ -11,9 +11,7 @@ defmodule Realtime.Application do
       RealtimeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:realtime, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Realtime.PubSub},
-      # Start a worker by calling: Realtime.Worker.start_link(arg)
-      # {Realtime.Worker, arg},
-      # Start to serve requests, typically the last entry
+      Realtime.GRPC.Server,
       RealtimeWeb.Endpoint
     ]
 
