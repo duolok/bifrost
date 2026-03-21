@@ -1,5 +1,6 @@
 .PHONY: dev down clean gateway-run gateway-build test-api migrate psql \
-       infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql
+       infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql \
+       validator-build validator-run validator-deploy
 
 dev:
 	docker compose up -d
@@ -18,6 +19,30 @@ gateway-build:
 
 gateway-run:
 	cd gateway && go run cmd/main.go
+
+validator-build:
+	cd validator && opam exec -- dune build
+
+validator-run:
+	cd validator && opam exec -- dune exec bin/main.exe
+
+validator-deploy:
+	@echo "==> Building and pushing validator..."
+	docker build -t $(VALIDATOR_IMG) validator/
+	docker push $(VALIDATOR_IMG)
+	@echo "==> Deploying validator to Cloud Run..."
+	gcloud run deploy bifrost-validator \
+		--image=$(VALIDATOR_IMG) \
+		--region=$(GCP_REGION) \
+		--project=$(GCP_PROJECT) \
+		--port=8090 \
+		--allow-unauthenticated \
+		--min-instances=0 \
+		--max-instances=3 \
+		--memory=256Mi \
+		--cpu=1
+	@echo "==> Validator URL:"
+	@gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)'
 
 test-api:
 	@./scripts/bifrost.sh test-api
@@ -39,8 +64,10 @@ infra-apply:
 GCP_PROJECT  := bifrost-platform
 GCP_REGION   := europe-central2
 REGISTRY     := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bifrost-platform
-GATEWAY_IMG  := $(REGISTRY)/gateway:latest
-BUILDER_IMG  := $(REGISTRY)/builder:latest
+GATEWAY_IMG    := $(REGISTRY)/gateway:latest
+BUILDER_IMG    := $(REGISTRY)/builder:latest
+VALIDATOR_IMG  := $(REGISTRY)/validator:latest
+VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
 GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
 # Spin up everything: infra → migrate → build → deploy to GKE
@@ -58,6 +85,20 @@ cloud-up:
 	@echo "==> Building and pushing builder..."
 	docker build -t $(BUILDER_IMG) builder/
 	docker push $(BUILDER_IMG)
+	@echo "==> Building and pushing validator..."
+	docker build -t $(VALIDATOR_IMG) validator/
+	docker push $(VALIDATOR_IMG)
+	@echo "==> Deploying validator to Cloud Run..."
+	gcloud run deploy bifrost-validator \
+		--image=$(VALIDATOR_IMG) \
+		--region=$(GCP_REGION) \
+		--project=$(GCP_PROJECT) \
+		--port=8090 \
+		--allow-unauthenticated \
+		--min-instances=0 \
+		--max-instances=3 \
+		--memory=256Mi \
+		--cpu=1
 	@echo "==> Deploying to GKE..."
 	kubectl apply -f gateway/k8s/sa.yaml
 	kubectl apply -f gateway/k8s/rbac.yaml
@@ -102,12 +143,24 @@ cloud-status:
 	@echo "=== Health Check ==="
 	@curl -s http://$(GATEWAY_URL)/health 2>/dev/null | jq . || echo "Gateway not reachable"
 
-# Build and deploy both services (no infra changes)
+# Build and deploy all services (no infra changes)
 cloud-deploy:
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
 	docker build -t $(BUILDER_IMG) builder/
 	docker push $(BUILDER_IMG)
+	docker build -t $(VALIDATOR_IMG) validator/
+	docker push $(VALIDATOR_IMG)
+	gcloud run deploy bifrost-validator \
+		--image=$(VALIDATOR_IMG) \
+		--region=$(GCP_REGION) \
+		--project=$(GCP_PROJECT) \
+		--port=8090 \
+		--allow-unauthenticated \
+		--min-instances=0 \
+		--max-instances=3 \
+		--memory=256Mi \
+		--cpu=1
 	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
 	@echo "==> Deployed. Waiting for rollout..."
