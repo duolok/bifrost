@@ -17,6 +17,7 @@ import (
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
 	"duolok/bifrost/gateway/internal/pubsub"
+	"duolok/bifrost/gateway/internal/validator"
 	"duolok/bifrost/gateway/pkg/apiutil"
 
 	"github.com/gin-gonic/gin"
@@ -30,14 +31,16 @@ type Handler struct {
 	pool      *pgxpool.Pool
 	deployer  *k8s.Deployer
 	publisher *pubsub.Publisher
+	validator *validator.Client
 	startAt   time.Time
 }
 
-func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher) *Handler {
+func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client) *Handler {
 	return &Handler{
 		pool:      pool,
 		deployer:  deployer,
 		publisher: publisher,
+		validator: validator,
 		startAt:   time.Now(),
 	}
 }
@@ -218,15 +221,13 @@ func (h *Handler) TriggerDeploy(c *gin.Context) {
 		"commit_sha": req.CommitSHA,
 	})
 
-	// Publish build request if publisher is configured
-	if h.publisher != nil {
-		var projectName, repoURL string
-		_ = h.pool.QueryRow(c.Request.Context(),
-			`SELECT name, repo_url FROM projects WHERE id = $1`, projectID,
-		).Scan(&projectName, &repoURL)
+	// Fetch project details for validation and build
+	var projectName, repoURL string
+	_ = h.pool.QueryRow(c.Request.Context(),
+		`SELECT name, repo_url FROM projects WHERE id = $1`, projectID,
+	).Scan(&projectName, &repoURL)
 
-		h.publishBuild(c, d.ID, projectName, repoURL, req.CommitSHA)
-	}
+	h.validateAndBuild(c, d.ID, projectName, repoURL, req.CommitSHA)
 
 	c.JSON(http.StatusCreated, d)
 }
@@ -455,9 +456,7 @@ func (h *Handler) HandleGitHubWebhook(c *gin.Context) {
 		"branch":     branch,
 	})
 
-	if h.publisher != nil {
-		h.publishBuild(c, d.ID, p.Name, p.RepoURL, commitSHA)
-	}
+	h.validateAndBuild(c, d.ID, p.Name, p.RepoURL, commitSHA)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":        "accepted",
@@ -465,15 +464,94 @@ func (h *Handler) HandleGitHubWebhook(c *gin.Context) {
 	})
 }
 
-func (h *Handler) publishBuild(c *gin.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
+func (h *Handler) validateAndBuild(c *gin.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
 	ctx := c.Request.Context()
 
+	if h.validator != nil {
+		h.runValidation(ctx, deployID, projectName, repoURL, commitSHA)
+	}
+
+	if h.publisher != nil {
+		h.publishBuild(ctx, deployID, projectName, repoURL, commitSHA)
+	}
+}
+
+func (h *Handler) runValidation(ctx context.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
+	// Transition queued → validating
 	_, err := h.pool.Exec(ctx,
-		`UPDATE deployments SET status = $1, build_started_at = NOW() WHERE id = $2 AND status = $3`,
-		models.StatusBuilding, deployID, models.StatusQueued,
+		`UPDATE deployments SET status = $1 WHERE id = $2 AND status = $3`,
+		models.StatusValidating, deployID, models.StatusQueued,
+	)
+	if err != nil {
+		slog.Error("failed to transition to validating", "deploy_id", deployID, "error", err)
+		return
+	}
+
+	slog.Info("validating deployment config", "deploy_id", deployID, "project", projectName)
+
+	// Fetch deploy.toml from repo
+	configRaw, err := validator.FetchDeployToml(ctx, repoURL, commitSHA)
+	if err != nil {
+		slog.Error("failed to fetch deploy.toml", "deploy_id", deployID, "error", err)
+		h.failDeploy(ctx, deployID, "failed to fetch deploy.toml: "+err.Error())
+		return
+	}
+
+	// Call the OCaml validator
+	result, err := h.validator.Validate(ctx, configRaw)
+	if err != nil {
+		slog.Error("validator call failed", "deploy_id", deployID, "error", err)
+		h.failDeploy(ctx, deployID, "validator unavailable: "+err.Error())
+		return
+	}
+
+	if result.Status != "valid" {
+		// Build a readable error message from validation errors
+		msgs := make([]string, len(result.Errors))
+		for i, e := range result.Errors {
+			msgs[i] = e.Field + ": " + e.Message
+		}
+		errMsg := "config validation failed: " + strings.Join(msgs, "; ")
+
+		slog.Warn("config validation failed", "deploy_id", deployID, "errors", msgs)
+		h.failDeploy(ctx, deployID, errMsg)
+		return
+	}
+
+	// Store the raw config as config_snapshot on the deployment
+	configJSON, _ := json.Marshal(map[string]string{"raw": configRaw})
+	h.pool.Exec(ctx,
+		`UPDATE deployments SET config_snapshot = $1 WHERE id = $2`,
+		configJSON, deployID,
+	)
+
+	slog.Info("config validation passed", "deploy_id", deployID, "project", projectName)
+}
+
+func (h *Handler) failDeploy(ctx context.Context, deployID uuid.UUID, message string) {
+	_, err := h.pool.Exec(ctx,
+		`UPDATE deployments SET status = $1, status_message = $2 WHERE id = $3`,
+		models.StatusFailed, message, deployID,
+	)
+	if err != nil {
+		slog.Error("failed to mark deployment as failed", "deploy_id", deployID, "error", err)
+	}
+}
+
+func (h *Handler) publishBuild(ctx context.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
+	// Accept transition from both queued (no validator) and validating (with validator)
+	tag, err := h.pool.Exec(ctx,
+		`UPDATE deployments SET status = $1, build_started_at = NOW()
+		 WHERE id = $2 AND status IN ($3, $4)`,
+		models.StatusBuilding, deployID, models.StatusQueued, models.StatusValidating,
 	)
 	if err != nil {
 		slog.Error("failed to transition to building", "deploy_id", deployID, "error", err)
+		return
+	}
+
+	// If no rows updated, deployment was already failed (e.g. validation failed)
+	if tag.RowsAffected() == 0 {
 		return
 	}
 
