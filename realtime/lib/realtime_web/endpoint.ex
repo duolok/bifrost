@@ -11,9 +11,13 @@ defmodule RealtimeWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  socket "/socket", RealtimeWeb.UserSocket,
+    websocket: true,
+    longpoll: false
+
   # socket "/live", Phoenix.LiveView.Socket,
   #   websocket: [connect_info: [session: @session_options]],
-  #   longpoll: [connect_info: [session: @session_options]]
+  #   longpoll: [connect_info: [session: options]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
