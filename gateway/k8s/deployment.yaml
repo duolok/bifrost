@@ -27,7 +27,7 @@ spec:
             - name: BF_ENV
               value: "prod"
             - name: BF_DATABASE_URL
-              value: "host=34.116.190.78 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
+              value: "host=34.118.15.91 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
             - name: BF_GCP_PROJECT
               value: "bifrost-platform"
             - name: BF_AR_REPO
@@ -36,6 +36,8 @@ spec:
               value: "true"
             - name: BF_K8S_NAMESPACE
               value: "bifrost-apps"
+            - name: BF_VALIDATOR_URL
+              value: "https://bifrost-validator-274528789467.europe-central2.run.app"
           resources:
             requests:
               cpu: "250m"
