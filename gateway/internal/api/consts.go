@@ -10,6 +10,7 @@ const (
 	auditWebhookReceived = "webhook.received"
 	auditDeployComplete  = "deployment.deployed"
 	auditDeployFailed    = "deployment.failed"
+	auditDeployRetried   = "deployment.retried"
 
 	triggerAPI           = "api"
 	triggerGitHubWebhook = "github-webhook"
