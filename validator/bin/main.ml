@@ -29,7 +29,7 @@ let response_to_json (result : validation_result) =
   Yojson.Safe.to_string json
 
 let () =
-  let server = Tiny_httpd.create ~port () in
+  let server = Tiny_httpd.create ~addr:"0.0.0.0" ~port () in
   Tiny_httpd.add_route_handler server ~meth:`GET
     Tiny_httpd.Route.(exact "health" @/ return)
     (fun _req -> Tiny_httpd.Response.make_string (Ok {|{"status": "ok"}|}));
