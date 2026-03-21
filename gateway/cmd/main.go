@@ -14,6 +14,7 @@ import (
 	"duolok/bifrost/gateway/internal/db"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/pubsub"
+	"duolok/bifrost/gateway/internal/validator"
 )
 
 func main() {
@@ -34,7 +35,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	// K8s deployer is optional — gateway works without it for local dev
 	var deployer *k8s.Deployer
 	deployer, err = k8s.NewDeployer(k8s.DeployConfig{
 		Namespace:  cfg.K8sNamespace,
@@ -70,7 +70,15 @@ func main() {
 		}
 	}
 
-	router := api.NewRouter(pool, deployer, publisher)
+	var validatorClient *validator.Client
+	if cfg.ValidatorURL != "" {
+		validatorClient = validator.NewClient(cfg.ValidatorURL)
+		slog.Info("validator configured", "url", cfg.ValidatorURL)
+	} else {
+		slog.Warn("validator not configured, config validation will be skipped")
+	}
+
+	router := api.NewRouter(pool, deployer, publisher, validatorClient)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -109,6 +117,7 @@ type GatewayConfig struct {
 	K8sInCluster  bool
 	K8sKubeconfig string
 	K8sNamespace  string
+	ValidatorURL  string
 }
 
 func loadConfig() GatewayConfig {
@@ -124,6 +133,7 @@ func loadConfig() GatewayConfig {
 		K8sInCluster:  os.Getenv("BF_K8S_IN_CLUSTER") == "true",
 		K8sKubeconfig: envOr("BF_KUBECONFIG", defaultKubeconfig),
 		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
+		ValidatorURL:  os.Getenv("BF_VALIDATOR_URL"),
 	}
 }
 
