@@ -29,6 +29,7 @@ func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Pub
 		apiGroup.GET("/projects/:id/deployments", h.ListDeployments)
 		apiGroup.GET("/deployments/:id", h.GetDeployment)
 		apiGroup.POST("/deployments/:id/deploy", h.DeployBuilt)
+		apiGroup.POST("/deployments/:id/retry", h.RetryDeploy)
 
 		apiGroup.POST("/webhook/github", h.HandleGitHubWebhook)
 	}

@@ -376,6 +376,81 @@ func (h *Handler) DeployBuilt(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
+func (h *Handler) RetryDeploy(c *gin.Context) {
+	id, ok := apiutil.ParseID(c, "id", resourceDeployment)
+	if !ok {
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var d models.Deployment
+	err := h.pool.QueryRow(ctx,
+		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
+		        status, status_message, config_snapshot,
+		        build_started_at, build_finished_at, deploy_started_at, deploy_finished_at, created_at
+		 FROM deployments
+		 WHERE id = $1`, id,
+	).Scan(
+		&d.ID, &d.ProjectID, &d.CommitSHA, &d.Branch, &d.TriggeredBy, &d.ImageURI,
+		&d.Status, &d.StatusMessage, &d.ConfigSnapshot,
+		&d.BuildStartedAt, &d.BuildFinishedAt, &d.DeployStartedAt, &d.DeployFinishedAt, &d.CreatedAt,
+	)
+	if err != nil {
+		if stderrors.Is(err, pgx.ErrNoRows) {
+			apiutil.RespondError(c, errors.NotFound(resourceDeployment, id))
+			return
+		}
+		apiutil.RespondError(c, errors.Internal("failed to get deployment", err))
+		return
+	}
+
+	if !models.CanTransition(d.Status, models.StatusQueued) {
+		apiutil.RespondError(c, errors.InvalidInput(
+			"cannot retry from status "+string(d.Status)+"; only failed deployments can be retried",
+		))
+		return
+	}
+
+	_, err = h.pool.Exec(ctx,
+		`UPDATE deployments
+		 SET status = $1, status_message = NULL, config_snapshot = NULL,
+		     build_started_at = NULL, build_finished_at = NULL,
+		     deploy_started_at = NULL, deploy_finished_at = NULL
+		 WHERE id = $2`,
+		models.StatusQueued, id,
+	)
+	if err != nil {
+		apiutil.RespondError(c, errors.Internal("failed to reset deployment", err))
+		return
+	}
+
+	h.audit(c, auditDeployRetried, resourceDeployment, id, gin.H{
+		"previous_status": string(d.Status),
+	})
+
+	var projectName, repoURL string
+	_ = h.pool.QueryRow(ctx,
+		`SELECT name, repo_url FROM projects WHERE id = $1`, d.ProjectID,
+	).Scan(&projectName, &repoURL)
+
+	h.validateAndBuild(c, id, projectName, repoURL, d.CommitSHA)
+
+	h.pool.QueryRow(ctx,
+		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
+		        status, status_message, config_snapshot,
+		        build_started_at, build_finished_at, deploy_started_at, deploy_finished_at, created_at
+		 FROM deployments
+		 WHERE id = $1`, id,
+	).Scan(
+		&d.ID, &d.ProjectID, &d.CommitSHA, &d.Branch, &d.TriggeredBy, &d.ImageURI,
+		&d.Status, &d.StatusMessage, &d.ConfigSnapshot,
+		&d.BuildStartedAt, &d.BuildFinishedAt, &d.DeployStartedAt, &d.DeployFinishedAt, &d.CreatedAt,
+	)
+
+	c.JSON(http.StatusOK, d)
+}
+
 type gitHubPushEvent struct {
 	Ref        string `json:"ref"`
 	After      string `json:"after"`
