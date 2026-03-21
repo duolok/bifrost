@@ -4,17 +4,18 @@ import (
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/middleware"
 	"duolok/bifrost/gateway/internal/pubsub"
+	"duolok/bifrost/gateway/internal/validator"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher) *gin.Engine {
+func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	h := NewHandler(pool, deployer, publisher)
+	h := NewHandler(pool, deployer, publisher, validator)
 
 	r.GET("/health", h.CheckHealth)
 	apiGroup := r.Group("/api/v1")
