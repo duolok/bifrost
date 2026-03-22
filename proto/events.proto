@@ -1,6 +1,8 @@
 syntax = "proto3";
 package bifrost.events;
 
+option go_package = "duolok/bifrost/gateway/internal/events/pb";
+
 message PlatformEvent {
   string event_type = 1;
   string deploy_id = 2;
@@ -12,8 +14,12 @@ message PlatformEvent {
 }
 
 service EventIngress {
-  rpc SendEvent (PlatformEvent) returns (Ack);
-  rpc StreamBuildLogs (stream BuildLogLine) returns (Ack);
+  rpc SendEvent(PlatformEvent) returns (Ack);
+  rpc StreamBuildLogs(stream BuildLogLine) returns (Ack);
 }
-message BuildLogLine { string deploy_id = 1; string line = 2; int64 timestamp = 3; }
+message BuildLogLine {
+  string deploy_id = 1;
+  string line = 2;
+  int64 timestamp = 3;
+}
 message Ack {}
