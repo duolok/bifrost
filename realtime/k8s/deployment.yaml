@@ -34,20 +34,20 @@ spec:
               value: "bifrost-realtime.bifrost-apps.svc.cluster.local"
           resources:
             requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
               cpu: "250m"
               memory: "256Mi"
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
           readinessProbe:
             httpGet:
-              path: /
+              path: /health
               port: 4000
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /
+              path: /health
               port: 4000
             initialDelaySeconds: 10
             periodSeconds: 30
