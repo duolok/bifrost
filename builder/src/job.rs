@@ -1,13 +1,14 @@
 use std::path::PathBuf;
 
 use crate::config::Config;
+use crate::realtime::RealtimeClient;
 use crate::{buildkit, git};
 use crate::message::{BuildComplete, BuildRequest};
 
-pub async fn run(cfg: &Config, req: BuildRequest) -> BuildComplete {
+pub async fn run(cfg: &Config, req: BuildRequest, mut rt: Option<&mut RealtimeClient>) -> BuildComplete {
     let work_dir = PathBuf::from(&cfg.workspace_dir).join(&req.deploy_id);
 
-    let result = execute(cfg, &req, &work_dir).await;
+    let result = execute(cfg, &req, &work_dir, rt).await;
 
     let _ = tokio::fs::remove_dir_all(&work_dir).await;
 
@@ -17,10 +18,19 @@ pub async fn run(cfg: &Config, req: BuildRequest) -> BuildComplete {
     }
 }
 
-async fn execute(cfg: &Config, req: &BuildRequest, work_dir: &PathBuf) -> anyhow::Result<()> {
+async fn execute(cfg: &Config, req: &BuildRequest, work_dir: &PathBuf, mut rt: Option<&mut RealtimeClient>) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(work_dir).await?;
 
+    if let Some(ref mut client) = rt {
+          client.send_log(&req.deploy_id, "Cloning repository...".into()).await;
+    }
+
     git::clone_at_commit(&req.repo_url, &req.commit_sha, work_dir).await?;
+
+
+      if let Some(ref mut client) = rt {
+          client.send_log(&req.deploy_id, "Clone complete, starting build...".into()).await;
+      }
 
     buildkit::build_and_push(
         &cfg.gcp_project,
@@ -28,6 +38,9 @@ async fn execute(cfg: &Config, req: &BuildRequest, work_dir: &PathBuf) -> anyhow
         &req.repo_url,
         &req.commit_sha,
         &req.image_uri,
+
+      &req.deploy_id,
+        rt
     ).await?;
 
     Ok(())
@@ -46,6 +59,7 @@ mod tests {
             subscription: "test".into(),
             complete_topic: "test".into(),
             workspace_dir: workspace.into(),
+            realtime_url: None,
         }
     }
 
@@ -62,7 +76,7 @@ mod tests {
             image_uri: "fake.registry/log:abc".into(),
         };
 
-        let result = run(&cfg, req).await;
+        let result = run(&cfg, req, None).await;
 
         assert!(!result.success);
         assert_eq!(result.deploy_id, "test-deploy-1");
@@ -82,7 +96,7 @@ mod tests {
             image_uri: "fake.registry/nope:abc".into(),
         };
 
-        let result = run(&cfg, req).await;
+        let result = run(&cfg, req, None).await;
 
         assert!(!result.success);
         assert!(result.error_message.contains("clone failed"));
@@ -101,7 +115,7 @@ mod tests {
             image_uri: "fake.registry/log:abc".into(),
         };
 
-        let _ = run(&cfg, req).await;
+        let _ = run(&cfg, req, None).await;
 
         let work_dir = tmp.path().join("cleanup-test");
         assert!(!work_dir.exists(), "work dir should be removed after job");
