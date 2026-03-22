@@ -38,6 +38,8 @@ spec:
               value: "bifrost-apps"
             - name: BF_VALIDATOR_URL
               value: "https://bifrost-validator-274528789467.europe-central2.run.app"
+            - name: BF_REALTIME_URL
+              value: "bifrost-realtime:50051"
           resources:
             requests:
               cpu: "250m"
