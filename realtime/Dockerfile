@@ -16,9 +16,9 @@ COPY lib/ lib/
 
 RUN mix compile && mix release
 
-FROM alpine:3.21
+FROM elixir:1.18-alpine
 
-RUN apk add --no-cache libstdc++ openssl ncurses-libs && \
+RUN apk add --no-cache libstdc++ ncurses-libs && \
     adduser -D -u 1000 realtime
 
 USER realtime
