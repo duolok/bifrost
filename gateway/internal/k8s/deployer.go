@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/models"
 
 	"github.com/google/uuid"
@@ -27,10 +28,11 @@ type DeployConfig struct {
 type Deployer struct {
 	client    kubernetes.Interface
 	pool      *pgxpool.Pool
+	emitter   *events.Emitter
 	namespace string
 }
 
-func NewDeployer(cfg DeployConfig, pool *pgxpool.Pool) (*Deployer, error) {
+func NewDeployer(cfg DeployConfig, pool *pgxpool.Pool, emitter *events.Emitter) (*Deployer, error) {
 	var restConfig *rest.Config
 	var err error
 
@@ -66,18 +68,20 @@ func NewDeployer(cfg DeployConfig, pool *pgxpool.Pool) (*Deployer, error) {
 	return &Deployer{
 		client:    client,
 		pool:      pool,
+		emitter:   emitter,
 		namespace: ns,
 	}, nil
 }
 
 // NewDeployerWithClient creates a Deployer with a provided kubernetes client (for testing).
-func NewDeployerWithClient(client kubernetes.Interface, pool *pgxpool.Pool, namespace string) *Deployer {
+func NewDeployerWithClient(client kubernetes.Interface, pool *pgxpool.Pool, emitter *events.Emitter, namespace string) *Deployer {
 	if namespace == "" {
 		namespace = "bifrost-apps"
 	}
 	return &Deployer{
 		client:    client,
 		pool:      pool,
+		emitter:   emitter,
 		namespace: namespace,
 	}
 }
@@ -91,11 +95,13 @@ func (d *Deployer) Deploy(ctx context.Context, deployment models.Deployment, pro
 	if err := d.transitionStatus(ctx, deployment.ID, deployment.Status, models.StatusDeploying, "Applying K8s manifests"); err != nil {
 		return err
 	}
+	d.emitter.Emit("deploy.deploying", deployment.ID.String(), project.Name, "Applying K8s manifests")
 
 	// Generate and apply manifests
 	if err := d.applyManifests(ctx, project, deployment); err != nil {
 		msg := fmt.Sprintf("deploy failed: %v", err)
 		_ = d.transitionStatus(ctx, deployment.ID, models.StatusDeploying, models.StatusFailed, msg)
+		d.emitter.Emit("deploy.deploy_failed", deployment.ID.String(), project.Name, msg)
 		return err
 	}
 
@@ -103,6 +109,7 @@ func (d *Deployer) Deploy(ctx context.Context, deployment models.Deployment, pro
 	if err := d.transitionStatus(ctx, deployment.ID, models.StatusDeploying, models.StatusRunning, "Manifests applied"); err != nil {
 		return err
 	}
+	d.emitter.Emit("deploy.running", deployment.ID.String(), project.Name, "Deployment live")
 
 	slog.Info("deployment applied to k8s",
 		"deployment_id", deployment.ID,
