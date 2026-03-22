@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"duolok/bifrost/gateway/internal/errors"
+	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
 	"duolok/bifrost/gateway/internal/pubsub"
@@ -32,15 +33,17 @@ type Handler struct {
 	deployer  *k8s.Deployer
 	publisher *pubsub.Publisher
 	validator *validator.Client
+	emitter   *events.Emitter
 	startAt   time.Time
 }
 
-func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client) *Handler {
+func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client, emiiter *events.Emitter) *Handler {
 	return &Handler{
 		pool:      pool,
 		deployer:  deployer,
 		publisher: publisher,
 		validator: validator,
+		emitter:   emiiter,
 		startAt:   time.Now(),
 	}
 }
@@ -228,6 +231,7 @@ func (h *Handler) TriggerDeploy(c *gin.Context) {
 	).Scan(&projectName, &repoURL)
 
 	h.validateAndBuild(c, d.ID, projectName, repoURL, req.CommitSHA)
+	h.emitter.Emit("deploy.created", d.ID.String(), projectName, "Deployment queued")
 
 	c.JSON(http.StatusCreated, d)
 }
@@ -435,6 +439,7 @@ func (h *Handler) RetryDeploy(c *gin.Context) {
 	).Scan(&projectName, &repoURL)
 
 	h.validateAndBuild(c, id, projectName, repoURL, d.CommitSHA)
+	h.emitter.Emit("deploy.retried", id.String(), projectName, "Deployment retried")
 
 	h.pool.QueryRow(ctx,
 		`SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
@@ -552,7 +557,8 @@ func (h *Handler) validateAndBuild(c *gin.Context, deployID uuid.UUID, projectNa
 }
 
 func (h *Handler) runValidation(ctx context.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
-	// Transition queued → validating
+	h.emitter.Emit("deploy.validating", deployID.String(), projectName, "Validating config")
+
 	_, err := h.pool.Exec(ctx,
 		`UPDATE deployments SET status = $1 WHERE id = $2 AND status = $3`,
 		models.StatusValidating, deployID, models.StatusQueued,
@@ -600,6 +606,7 @@ func (h *Handler) runValidation(ctx context.Context, deployID uuid.UUID, project
 		configJSON, deployID,
 	)
 
+	h.emitter.Emit("deploy.validated", deployID.String(), projectName, "Config validation passed")
 	slog.Info("config validation passed", "deploy_id", deployID, "project", projectName)
 }
 
@@ -608,6 +615,9 @@ func (h *Handler) failDeploy(ctx context.Context, deployID uuid.UUID, message st
 		`UPDATE deployments SET status = $1, status_message = $2 WHERE id = $3`,
 		models.StatusFailed, message, deployID,
 	)
+
+	h.emitter.Emit("deploy.failed", deployID.String(), "", message)
+
 	if err != nil {
 		slog.Error("failed to mark deployment as failed", "deploy_id", deployID, "error", err)
 	}
@@ -629,6 +639,8 @@ func (h *Handler) publishBuild(ctx context.Context, deployID uuid.UUID, projectN
 	if tag.RowsAffected() == 0 {
 		return
 	}
+
+	h.emitter.Emit("deploy.building", deployID.String(), projectName, "Build started")
 
 	req := pubsub.BuildRequest{
 		DeployID:    deployID.String(),
