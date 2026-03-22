@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
+use crate::realtime::RealtimeClient;
 
 /// Submits a build to Cloud Build API using a source tarball uploaded to GCS.
 /// The caller must have already cloned the repo into context_dir.
@@ -13,6 +14,8 @@ pub async fn build_and_push(
     _repo_url: &str,
     commit_sha: &str,
     image_uri: &str,
+    deploy_id: &str,
+    mut rt: Option<&mut RealtimeClient>,
 ) -> Result<()> {
     let creds: AccessTokenCredentials = Builder::default()
         .with_scopes(["https://www.googleapis.com/auth/cloud-platform"])
@@ -137,6 +140,10 @@ pub async fn build_and_push(
 
         let build: BuildStatusResponse = resp.json().await
             .context("failed to parse build status")?;
+
+        if let Some(ref mut client) = rt {
+              client.send_log(deploy_id, format!("Build status: {}", build.status)).await;
+          }
 
         tracing::info!(build_id = %build_id, status = %build.status, "build status");
 
