@@ -37,7 +37,7 @@ func TestDeploySuccess(t *testing.T) {
 	}
 
 	fakeClient := fake.NewSimpleClientset()
-	deployer := NewDeployerWithClient(fakeClient, pool, "bifrost-apps")
+	deployer := NewDeployerWithClient(fakeClient, pool, nil, "bifrost-apps")
 
 	project := models.Project{ID: projectID, Name: "deploy-ok"}
 	deployment := models.Deployment{
@@ -106,7 +106,7 @@ func TestDeployInvalidTransition(t *testing.T) {
 	ctx := context.Background()
 
 	fakeClient := fake.NewSimpleClientset()
-	deployer := NewDeployerWithClient(fakeClient, pool, "bifrost-apps")
+	deployer := NewDeployerWithClient(fakeClient, pool, nil, "bifrost-apps")
 
 	deployment := models.Deployment{
 		ID:     uuid.New(),
@@ -143,7 +143,7 @@ func TestDeployUpdatesExistingResources(t *testing.T) {
 	).Scan(&deployID1)
 
 	fakeClient := fake.NewSimpleClientset()
-	deployer := NewDeployerWithClient(fakeClient, pool, "default")
+	deployer := NewDeployerWithClient(fakeClient, pool, nil, "default")
 
 	project := models.Project{ID: projectID, Name: "redeploy"}
 
@@ -171,7 +171,7 @@ func TestDeployUpdatesExistingResources(t *testing.T) {
 
 func TestDeleteIdempotent(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
-	deployer := NewDeployerWithClient(fakeClient, nil, "default")
+	deployer := NewDeployerWithClient(fakeClient, nil, nil, "default")
 
 	err := deployer.Delete(context.Background(), "nonexistent")
 	if err != nil {
