@@ -30,6 +30,8 @@ spec:
               value: "/tmp/builder"
             - name: RUST_LOG
               value: "info"
+            - name: BF_REALTIME_URL
+              value: "http://bifrost-realtime:50051"
           resources:
             requests:
               cpu: "250m"
