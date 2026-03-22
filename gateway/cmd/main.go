@@ -12,6 +12,7 @@ import (
 
 	"duolok/bifrost/gateway/internal/api"
 	"duolok/bifrost/gateway/internal/db"
+	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/pubsub"
 	"duolok/bifrost/gateway/internal/validator"
@@ -35,12 +36,25 @@ func main() {
 	}
 	defer pool.Close()
 
+	var emitter *events.Emitter
+	if cfg.RealtimeURL != "" {
+		var emitErr error
+		emitter, emitErr = events.NewEmitter(cfg.RealtimeURL)
+		if emitErr != nil {
+			slog.Warn("event emitter unavailable", "error", emitErr)
+			emitter = nil
+		} else {
+			defer emitter.Close()
+			slog.Info("event emitter configured", "url", cfg.RealtimeURL)
+		}
+	}
+
 	var deployer *k8s.Deployer
 	deployer, err = k8s.NewDeployer(k8s.DeployConfig{
 		Namespace:  cfg.K8sNamespace,
 		InCluster:  cfg.K8sInCluster,
 		Kubeconfig: cfg.K8sKubeconfig,
-	}, pool)
+	}, pool, emitter)
 	if err != nil {
 		slog.Warn("k8s deployer unavailable, deploy endpoints disabled", "error", err)
 		deployer = nil
@@ -58,7 +72,7 @@ func main() {
 	}
 
 	if cfg.GCPProject != "" {
-		sub, err := pubsub.NewSubscriber(ctx, pool, deployer, cfg.GCPProject, "gateway-build-complete")
+		sub, err := pubsub.NewSubscriber(ctx, pool, deployer, emitter, cfg.GCPProject, "gateway-build-complete")
 		if err != nil {
 			slog.Warn("pubsub subscriber unavailable", "error", err)
 		} else {
@@ -78,7 +92,7 @@ func main() {
 		slog.Warn("validator not configured, config validation will be skipped")
 	}
 
-	router := api.NewRouter(pool, deployer, publisher, validatorClient)
+	router := api.NewRouter(pool, deployer, publisher, validatorClient, emitter)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -98,7 +112,7 @@ func main() {
 	<-quit
 	slog.Info("shutting down gateway")
 
-	cancel() // Stop subscriber
+	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -117,6 +131,7 @@ type GatewayConfig struct {
 	K8sInCluster  bool
 	K8sKubeconfig string
 	K8sNamespace  string
+	RealtimeURL   string
 	ValidatorURL  string
 }
 
@@ -133,6 +148,7 @@ func loadConfig() GatewayConfig {
 		K8sInCluster:  os.Getenv("BF_K8S_IN_CLUSTER") == "true",
 		K8sKubeconfig: envOr("BF_KUBECONFIG", defaultKubeconfig),
 		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
+		RealtimeURL:   os.Getenv("BF_REALTIME_URL"),
 		ValidatorURL:  os.Getenv("BF_VALIDATOR_URL"),
 	}
 }
