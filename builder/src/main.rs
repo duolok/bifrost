@@ -4,6 +4,7 @@ mod git;
 mod job;
 mod message;
 mod pubsub;
+mod realtime;
 
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;
