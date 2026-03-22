@@ -85,53 +85,13 @@ REALTIME_IMG   := $(REGISTRY)/realtime:latest
 VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
 GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
-# Spin up everything: infra → migrate → build → deploy to GKE
+# Spin up everything from scratch: infra → migrate → build → deploy
 cloud-up:
 	@echo "==> Applying Terraform..."
 	cd infra && terraform apply -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
-	@echo "==> Getting kubectl credentials..."
-	gcloud container clusters get-credentials bifrost-cluster --region $(GCP_REGION) --project $(GCP_PROJECT)
-	kubectl create namespace bifrost-apps 2>/dev/null || true
 	@echo "==> Running migrations..."
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost -f scripts/migrations/001_init.sql 2>/dev/null || echo "Tables already exist"
-	@echo "==> Building and pushing gateway..."
-	docker build -t $(GATEWAY_IMG) gateway/
-	docker push $(GATEWAY_IMG)
-	@echo "==> Building and pushing builder..."
-	docker build -t $(BUILDER_IMG) builder/
-	docker push $(BUILDER_IMG)
-	@echo "==> Building and pushing validator..."
-	docker build -t $(VALIDATOR_IMG) validator/
-	docker push $(VALIDATOR_IMG)
-	@echo "==> Deploying validator to Cloud Run..."
-	gcloud run deploy bifrost-validator \
-		--image=$(VALIDATOR_IMG) \
-		--region=$(GCP_REGION) \
-		--project=$(GCP_PROJECT) \
-		--port=8090 \
-		--allow-unauthenticated \
-		--min-instances=0 \
-		--max-instances=3 \
-		--memory=256Mi \
-		--cpu=1
-	@echo "==> Building and pushing realtime..."
-	docker build -t $(REALTIME_IMG) realtime/
-	docker push $(REALTIME_IMG)
-	@echo "==> Deploying to GKE..."
-	kubectl apply -f gateway/k8s/sa.yaml
-	kubectl apply -f gateway/k8s/rbac.yaml
-	kubectl apply -f gateway/k8s/deployment.yaml
-	kubectl apply -f gateway/k8s/service.yaml
-	kubectl apply -f builder/k8s/sa.yaml
-	kubectl apply -f builder/k8s/deployment.yaml
-	kubectl apply -f realtime/k8s/deployment.yaml
-	kubectl apply -f realtime/k8s/service.yaml
-	@echo "==> Waiting for gateway external IP..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		IP=$$(kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null); \
-		if [ -n "$$IP" ]; then echo "==> Gateway: http://$$IP/health"; exit 0; fi; \
-		sleep 10; \
-	done; echo "==> IP not assigned yet, check: kubectl get svc -n bifrost-apps"
+	@$(MAKE) cloud-deploy
 
 # Tear down everything
 cloud-down:
@@ -167,12 +127,21 @@ cloud-status:
 
 # Build and deploy all services (no infra changes)
 cloud-deploy:
+	@echo "==> Getting kubectl credentials..."
+	gcloud container clusters get-credentials bifrost-cluster --region $(GCP_REGION) --project $(GCP_PROJECT)
+	kubectl create namespace bifrost-apps 2>/dev/null || true
+	@echo "==> Building and pushing gateway..."
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
+	@echo "==> Building and pushing builder..."
+	cp -r proto builder/proto
 	docker build -t $(BUILDER_IMG) builder/
+	rm -rf builder/proto
 	docker push $(BUILDER_IMG)
+	@echo "==> Building and pushing validator..."
 	docker build -t $(VALIDATOR_IMG) validator/
 	docker push $(VALIDATOR_IMG)
+	@echo "==> Deploying validator to Cloud Run..."
 	gcloud run deploy bifrost-validator \
 		--image=$(VALIDATOR_IMG) \
 		--region=$(GCP_REGION) \
@@ -183,15 +152,31 @@ cloud-deploy:
 		--max-instances=3 \
 		--memory=256Mi \
 		--cpu=1
+	@echo "==> Building and pushing realtime..."
 	docker build -t $(REALTIME_IMG) realtime/
 	docker push $(REALTIME_IMG)
+	@echo "==> Applying K8s manifests..."
+	kubectl apply -f gateway/k8s/sa.yaml
+	kubectl apply -f gateway/k8s/rbac.yaml
+	kubectl apply -f gateway/k8s/deployment.yaml
+	kubectl apply -f gateway/k8s/service.yaml
+	kubectl apply -f builder/k8s/sa.yaml
+	kubectl apply -f builder/k8s/deployment.yaml
+	kubectl apply -f realtime/k8s/deployment.yaml
+	kubectl apply -f realtime/k8s/service.yaml
+	@echo "==> Restarting deployments to pick up new images..."
 	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-realtime -n bifrost-apps
-	@echo "==> Deployed. Waiting for rollout..."
-	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=120s
-	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=120s
-	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=120s
+	@echo "==> Waiting for rollout..."
+	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=180s
+	@echo "==> All services deployed."
+	@echo "=== Pod Status ==="
+	@kubectl get pods -n bifrost-apps
+	@echo "=== Services ==="
+	@kubectl get svc -n bifrost-apps
 
 cloud-psql:
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost
