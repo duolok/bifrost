@@ -1,6 +1,7 @@
 .PHONY: dev down clean gateway-run gateway-build test-api migrate psql \
        infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql \
-       validator-build validator-run validator-deploy
+       validator-build validator-run validator-deploy \
+       realtime-build realtime-run realtime-deploy
 
 dev:
 	docker compose up -d
@@ -44,6 +45,19 @@ validator-deploy:
 	@echo "==> Validator URL:"
 	@gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)'
 
+realtime-run:
+	cd realtime && mix phx.server
+
+realtime-deploy:
+	@echo "==> Building and pushing realtime..."
+	docker build -t $(REALTIME_IMG) realtime/
+	docker push $(REALTIME_IMG)
+	@echo "==> Deploying realtime to GKE..."
+	kubectl apply -f realtime/k8s/deployment.yaml
+	kubectl apply -f realtime/k8s/service.yaml
+	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=120s
+	@echo "==> Realtime deployed."
+
 test-api:
 	@./scripts/bifrost.sh test-api
 
@@ -67,6 +81,7 @@ REGISTRY     := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bifrost-platform
 GATEWAY_IMG    := $(REGISTRY)/gateway:latest
 BUILDER_IMG    := $(REGISTRY)/builder:latest
 VALIDATOR_IMG  := $(REGISTRY)/validator:latest
+REALTIME_IMG   := $(REGISTRY)/realtime:latest
 VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
 GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
@@ -99,6 +114,9 @@ cloud-up:
 		--max-instances=3 \
 		--memory=256Mi \
 		--cpu=1
+	@echo "==> Building and pushing realtime..."
+	docker build -t $(REALTIME_IMG) realtime/
+	docker push $(REALTIME_IMG)
 	@echo "==> Deploying to GKE..."
 	kubectl apply -f gateway/k8s/sa.yaml
 	kubectl apply -f gateway/k8s/rbac.yaml
@@ -106,6 +124,8 @@ cloud-up:
 	kubectl apply -f gateway/k8s/service.yaml
 	kubectl apply -f builder/k8s/sa.yaml
 	kubectl apply -f builder/k8s/deployment.yaml
+	kubectl apply -f realtime/k8s/deployment.yaml
+	kubectl apply -f realtime/k8s/service.yaml
 	@echo "==> Waiting for gateway external IP..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
 		IP=$$(kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null); \
@@ -116,6 +136,8 @@ cloud-up:
 # Tear down everything
 cloud-down:
 	@echo "==> Deleting GKE workloads..."
+	kubectl delete -f realtime/k8s/service.yaml 2>/dev/null || true
+	kubectl delete -f realtime/k8s/deployment.yaml 2>/dev/null || true
 	kubectl delete -f builder/k8s/deployment.yaml 2>/dev/null || true
 	kubectl delete -f gateway/k8s/deployment.yaml 2>/dev/null || true
 	kubectl delete -f gateway/k8s/service.yaml 2>/dev/null || true
@@ -161,11 +183,15 @@ cloud-deploy:
 		--max-instances=3 \
 		--memory=256Mi \
 		--cpu=1
+	docker build -t $(REALTIME_IMG) realtime/
+	docker push $(REALTIME_IMG)
 	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-realtime -n bifrost-apps
 	@echo "==> Deployed. Waiting for rollout..."
 	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=120s
 	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=120s
+	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=120s
 
 cloud-psql:
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost
