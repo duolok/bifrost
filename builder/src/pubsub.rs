@@ -7,6 +7,7 @@ use google_cloud_pubsub::model::Message;
 use crate::config::Config;
 use crate::job;
 use crate::message::BuildRequest;
+use crate::realtime::RealtimeClient;
 
 pub async fn run(cfg: Config) -> Result<()> {
     let cfg = Arc::new(cfg);
@@ -22,6 +23,20 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     let subscriber = Subscriber::builder().build().await?;
     let publisher = Publisher::builder(&topic_resource).build().await?;
+
+    let mut rt_client = match &cfg.realtime_url {
+        Some(url) => match RealtimeClient::connect(url).await {
+            Ok(c) => {
+                tracing::info!(url = %url, "realtime client connected");
+                Some(c)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "realtime client unavailable, log streaming disabled");
+                None
+            }
+        },
+        None => None,
+    };
 
     tracing::info!("listening for build requests");
 
@@ -54,7 +69,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         let publisher = publisher.clone();
 
         // Run the build
-        let result = job::run(&cfg, req).await;
+        let result = job::run(&cfg, req, rt_client.as_mut()).await;
         tracing::info!(deploy_id = %result.deploy_id, success = result.success, "build finished");
 
         match serde_json::to_vec(&result) {
