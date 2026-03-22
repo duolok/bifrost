@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-realtime
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-realtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-realtime
+  template:
+    metadata:
+      labels:
+        app: bifrost-realtime
+    spec:
+      containers:
+        - name: realtime
+          image: europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/realtime:latest
+          ports:
+            - containerPort: 4000
+              name: http
+            - containerPort: 50051
+              name: grpc
+          env:
+            - name: PHX_SERVER
+              value: "true"
+            - name: PORT
+              value: "4000"
+            - name: SECRET_KEY_BASE
+              value: "bifrost-realtime-secret-key-base-that-is-at-least-64-bytes-long-for-prod"
+            - name: PHX_HOST
+              value: "bifrost-realtime.bifrost-apps.svc.cluster.local"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 30
