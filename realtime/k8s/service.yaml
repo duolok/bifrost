@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bifrost-realtime
+  namespace: bifrost-apps
+spec:
+  type: ClusterIP
+  selector:
+    app: bifrost-realtime
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bifrost-realtime-ws
+  namespace: bifrost-apps
+spec:
+  type: LoadBalancer
+  selector:
+    app: bifrost-realtime
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4000
