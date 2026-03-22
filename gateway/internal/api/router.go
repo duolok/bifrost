@@ -1,6 +1,7 @@
 package api
 
 import (
+	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/middleware"
 	"duolok/bifrost/gateway/internal/pubsub"
@@ -10,12 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client) *gin.Engine {
+func NewRouter(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client, emitter *events.Emitter) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	h := NewHandler(pool, deployer, publisher, validator)
+	h := NewHandler(pool, deployer, publisher, validator, emitter)
 
 	r.GET("/health", h.CheckHealth)
 	apiGroup := r.Group("/api/v1")
