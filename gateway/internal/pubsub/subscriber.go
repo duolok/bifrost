@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	gcppubsub "cloud.google.com/go/pubsub"
+	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
+
+	gcppubsub "cloud.google.com/go/pubsub"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,10 +25,11 @@ type BuildComplete struct {
 type Subscriber struct {
 	pool     *pgxpool.Pool
 	deployer *k8s.Deployer
+	emitter  *events.Emitter
 	sub      *gcppubsub.Subscription
 }
 
-func NewSubscriber(ctx context.Context, pool *pgxpool.Pool, deployer *k8s.Deployer, gcpProject, subName string) (*Subscriber, error) {
+func NewSubscriber(ctx context.Context, pool *pgxpool.Pool, deployer *k8s.Deployer, emitter *events.Emitter, gcpProject, subName string) (*Subscriber, error) {
 	client, err := gcppubsub.NewClient(ctx, gcpProject)
 	if err != nil {
 		return nil, fmt.Errorf("create pubsub client: %w", err)
@@ -35,6 +38,7 @@ func NewSubscriber(ctx context.Context, pool *pgxpool.Pool, deployer *k8s.Deploy
 	return &Subscriber{
 		pool:     pool,
 		deployer: deployer,
+		emitter:  emitter,
 		sub:      client.Subscription(subName),
 	}, nil
 }
@@ -73,6 +77,7 @@ func (s *Subscriber) handleBuildComplete(ctx context.Context, bc BuildComplete) 
 			 WHERE id = $3 AND status = $4`,
 			models.StatusFailed, bc.ErrorMessage, deployID, models.StatusBuilding,
 		)
+		s.emitter.Emit("deploy.build_failed", bc.DeployID, "", bc.ErrorMessage)
 		return err
 	}
 
@@ -89,6 +94,8 @@ func (s *Subscriber) handleBuildComplete(ctx context.Context, bc BuildComplete) 
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("deployment %s not in building state", deployID)
 	}
+
+	s.emitter.Emit("deploy.built", bc.DeployID, "", "Build complete")
 
 	if s.deployer == nil {
 		slog.Warn("k8s deployer not configured, stopping at built", "deploy_id", deployID)
