@@ -1,7 +1,8 @@
 .PHONY: dev down clean gateway-run gateway-build test-api migrate psql \
        infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql \
        validator-build validator-run validator-deploy \
-       realtime-build realtime-run realtime-deploy
+       realtime-build realtime-run realtime-deploy \
+       healthcheck-build healthcheck-run
 
 dev:
 	docker compose up -d
@@ -45,6 +46,12 @@ validator-deploy:
 	@echo "==> Validator URL:"
 	@gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)'
 
+healthcheck-build:
+	cd healthcheck && zig build -Doptimize=ReleaseSmall
+
+healthcheck-run:
+	cd healthcheck && zig build run
+
 realtime-run:
 	cd realtime && mix phx.server
 
@@ -81,7 +88,8 @@ REGISTRY     := $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT)/bifrost-platform
 GATEWAY_IMG    := $(REGISTRY)/gateway:latest
 BUILDER_IMG    := $(REGISTRY)/builder:latest
 VALIDATOR_IMG  := $(REGISTRY)/validator:latest
-REALTIME_IMG   := $(REGISTRY)/realtime:latest
+REALTIME_IMG       := $(REGISTRY)/realtime:latest
+HEALTHCHECK_IMG    := $(REGISTRY)/healthcheck:latest
 VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
 GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
@@ -152,6 +160,9 @@ cloud-deploy:
 		--max-instances=3 \
 		--memory=256Mi \
 		--cpu=1
+	@echo "==> Building and pushing healthcheck sidecar..."
+	docker build -t $(HEALTHCHECK_IMG) healthcheck/
+	docker push $(HEALTHCHECK_IMG)
 	@echo "==> Building and pushing realtime..."
 	docker build -t $(REALTIME_IMG) realtime/
 	docker push $(REALTIME_IMG)
