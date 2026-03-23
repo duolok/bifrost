@@ -14,10 +14,14 @@ import (
 )
 
 const (
-	managedBy       = "bifrost"
-	defaultReplicas = int32(2)
-	defaultPort     = int32(8080)
-	healthPath      = "/healthz"
+	managedBy        = "bifrost"
+	defaultReplicas  = int32(2)
+	defaultPort      = int32(8080)
+	healthPath       = "/healthz"
+	sidecarImage     = "europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/healthcheck:latest"
+	sidecarInterval  = "10"
+	gatewayService   = "bifrost-gateway"
+	gatewayPort      = "8080"
 )
 
 var invalidDNS = regexp.MustCompile(`[^a-z0-9-]`)
@@ -126,6 +130,29 @@ func BuildDeployment(project models.Project, deployment models.Deployment, names
 								},
 								InitialDelaySeconds: 15,
 								PeriodSeconds:       20,
+							},
+						},
+						{
+							Name:  "healthcheck",
+							Image: sidecarImage,
+							Env: []corev1.EnvVar{
+								{Name: "BF_DEPLOY_ID", Value: deployment.ID.String()},
+								{Name: "BF_PROBE_HOST", Value: "localhost"},
+								{Name: "BF_PROBE_PORT", Value: "8080"},
+								{Name: "BF_PROBE_PATH", Value: healthPath},
+								{Name: "BF_GATEWAY_HOST", Value: gatewayService},
+								{Name: "BF_GATEWAY_PORT", Value: gatewayPort},
+								{Name: "BF_INTERVAL_S", Value: sidecarInterval},
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("16Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("32Mi"),
+								},
 							},
 						},
 					},
