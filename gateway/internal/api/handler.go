@@ -659,6 +659,48 @@ func (h *Handler) publishBuild(ctx context.Context, deployID uuid.UUID, projectN
 	}
 }
 
+func (h *Handler) ReportHealth(c *gin.Context) {
+	deployID, ok := apiutil.ParseID(c, "id", resourceDeployment)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Healthy         bool    `json:"healthy"`
+		ResponseTimeMs  int     `json:"response_time_ms"`
+		MemoryUsedKB    int64   `json:"memory_used_kb"`
+		MemoryTotalKB   int64   `json:"memory_total_kb"`
+		CpuUsagePercent float64 `json:"cpu_usage_percent"`
+		OpenFds         int     `json:"open_fds"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		apiutil.RespondError(c, errors.InvalidInput(err.Error()))
+		return
+	}
+
+	status := "healthy"
+	if !body.Healthy {
+		status = "unhealthy"
+	}
+
+	memPercent := float64(0)
+	if body.MemoryTotalKB > 0 {
+		memPercent = float64(body.MemoryUsedKB) / float64(body.MemoryTotalKB) * 100
+	}
+
+	_, err := h.pool.Exec(c.Request.Context(),
+		`INSERT INTO health_checks (deployment_id, status, response_time_ms, cpu_percent, memory_bytes, memory_percent, fd_count)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		deployID, status, body.ResponseTimeMs, body.CpuUsagePercent, body.MemoryUsedKB*1024, memPercent, body.OpenFds,
+	)
+	if err != nil {
+		apiutil.RespondError(c, errors.Internal("failed to store health check", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func (h *Handler) CheckHealth(c *gin.Context) {
 	health := gin.H{
 		"status":  "ok",
