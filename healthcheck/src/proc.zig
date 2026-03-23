@@ -3,7 +3,7 @@ const std = @import("std");
 pub const Metrics = struct {
     memory_used_kb: u64,
     memory_total_kb: u64,
-    cpu_usage_percentage: u64,
+    cpu_usage_percent: f64,
     open_fds: u64,
 };
 
@@ -19,7 +19,7 @@ pub fn collect() !Metrics {
     return Metrics{
         .memory_used_kb = mem.total - mem.available,
         .memory_total_kb = mem.total,
-        .cpu_usage_percentage = cpu,
+        .cpu_usage_percent = cpu,
         .open_fds = fds,
     };
 }
@@ -64,11 +64,11 @@ fn readCpu() !f64 {
     var it = std.mem.tokenizeScalar(u8, line, ' ');
     _ = it.next();
 
-    var total: f64 = 0;
-    var idle: f64 = 0;
+    var total: u64 = 0;
+    var idle: u64 = 0;
     var i: u8 = 0;
     while (it.next()) |token| {
-        const val = std.fmt.parseInt(u64, token, 10) catch return 0;
+        const val = std.fmt.parseInt(u64, token, 10) catch continue;
         total += val;
         if (i == 3) idle = val;
         i += 1;
@@ -81,7 +81,7 @@ fn readCpu() !f64 {
 }
 
 fn countFds() !u64 {
-    var dir = try std.fs.openDirAbsolute("/proc/self/fd", .{ .iterate = true }) catch return 0;
+    var dir = std.fs.openDirAbsolute("/proc/self/fd", .{ .iterate = true }) catch return 0;
     defer dir.close();
 
     var count: u64 = 0;
