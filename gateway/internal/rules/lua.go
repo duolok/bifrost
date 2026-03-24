@@ -4,8 +4,8 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// Creates a sandboxed Lua VM and sets up everything the script needs.
-func newLuaState(event HealthEvent) *lua.LState {
+// newLuaState creates a sandboxed Lua VM. Returns the VM and the actions table.
+func newLuaState(event HealthEvent) (*lua.LState, *lua.LTable) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 
 	lua.OpenBase(L)
@@ -22,12 +22,8 @@ func newLuaState(event HealthEvent) *lua.LState {
 	L.SetGlobal("project", lua.LString(event.Project))
 
 	actions := L.NewTable()
-	L.SetGlobal("_actions", actions)
 
-	// Alert function is Go's function that is exposed to Lua.
-	// - Reads the 3 arguments (severity, message, to)
-	//    - Creates a Lua table with those values
-	//    - Appends it to the _actions list
+	// alert(severity, message, to) — captures actions table directly
 	L.SetGlobal("alert", L.NewFunction(func(L *lua.LState) int {
 		severity := L.CheckString(1)
 		message := L.CheckString(2)
@@ -39,25 +35,15 @@ func newLuaState(event HealthEvent) *lua.LState {
 		action.RawSetString("message", lua.LString(message))
 		action.RawSetString("to", lua.LString(to))
 
-		L.GetGlobal("_actions")
-		tbl := L.ToTable(-1)
-		tbl.Append(action)
-		L.Pop(1)
-
+		actions.Append(action)
 		return 0
 	}))
 
-	return L
+	return L, actions
 }
 
-// Function that runs after Lua script finishes, converts lua table to GO action struct and returns a slice.
-func collectActions(L *lua.LState) []Action {
-	L.GetGlobal("_actions")
-	tbl := L.ToTable(-1)
-	if tbl == nil {
-		return nil
-	}
-
+// collectActions converts the Lua actions table to Go Action structs.
+func collectActions(tbl *lua.LTable) []Action {
 	var actions []Action
 	tbl.ForEach(func(_, v lua.LValue) {
 		if t, ok := v.(*lua.LTable); ok {
@@ -69,6 +55,5 @@ func collectActions(L *lua.LState) []Action {
 			})
 		}
 	})
-
 	return actions
 }
