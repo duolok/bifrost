@@ -14,7 +14,9 @@ import (
 	"duolok/bifrost/gateway/internal/db"
 	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
+	"duolok/bifrost/gateway/internal/notify"
 	"duolok/bifrost/gateway/internal/pubsub"
+	"duolok/bifrost/gateway/internal/rules"
 	"duolok/bifrost/gateway/internal/validator"
 )
 
@@ -92,7 +94,20 @@ func main() {
 		slog.Warn("validator not configured, config validation will be skipped")
 	}
 
-	router := api.NewRouter(pool, deployer, publisher, validatorClient, emitter)
+	var notifier *notify.Publisher
+	if cfg.RabbitMqURL != "" {
+		var notifyErr error
+		notifier, notifyErr := notify.NewPublisher(cfg.RabbitMqURL)
+		if err != nil {
+			slog.Warn("rabbitmq unavailable, notifications disabled", "error", notifyErr)
+			notifier = nil
+		} else {
+			defer notifier.Close()
+		}
+	}
+
+	rulesEngine := rules.NewEngine(notifier)
+	router := api.NewRouter(pool, deployer, publisher, validatorClient, emitter, notifier, rulesEngine)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -133,6 +148,7 @@ type GatewayConfig struct {
 	K8sNamespace  string
 	RealtimeURL   string
 	ValidatorURL  string
+	RabbitMqURL   string
 }
 
 func loadConfig() GatewayConfig {
@@ -150,6 +166,7 @@ func loadConfig() GatewayConfig {
 		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
 		RealtimeURL:   os.Getenv("BF_REALTIME_URL"),
 		ValidatorURL:  os.Getenv("BF_VALIDATOR_URL"),
+		RabbitMqURL:   envOr("BF_RABBITMQ_URL", "amqp://bifrost:localdev@localhost:5672/"),
 	}
 }
 
