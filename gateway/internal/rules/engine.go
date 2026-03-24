@@ -33,7 +33,7 @@ func NewEngine(notifier *notify.Publisher) *Engine {
 }
 
 func (e *Engine) Evaluate(event HealthEvent, script string) []Action {
-	L := newLuaState(event)
+	L, actionsTbl := newLuaState(event)
 	defer L.Close()
 
 	if err := L.DoString(script); err != nil {
@@ -41,5 +41,7 @@ func (e *Engine) Evaluate(event HealthEvent, script string) []Action {
 		return nil
 	}
 
-	return collectActions(L)
+	actions := collectActions(actionsTbl)
+	slog.Info("lua rules evaluated", "project", event.Project, "actions", len(actions))
+	return actions
 }
