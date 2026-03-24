@@ -17,7 +17,9 @@ import (
 	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
 	"duolok/bifrost/gateway/internal/models"
+	"duolok/bifrost/gateway/internal/notify"
 	"duolok/bifrost/gateway/internal/pubsub"
+	"duolok/bifrost/gateway/internal/rules"
 	"duolok/bifrost/gateway/internal/validator"
 	"duolok/bifrost/gateway/pkg/apiutil"
 
@@ -34,16 +36,20 @@ type Handler struct {
 	publisher *pubsub.Publisher
 	validator *validator.Client
 	emitter   *events.Emitter
+	notifier  *notify.Publisher
+	rules     *rules.Engine
 	startAt   time.Time
 }
 
-func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client, emiiter *events.Emitter) *Handler {
+func NewHandler(pool *pgxpool.Pool, deployer *k8s.Deployer, publisher *pubsub.Publisher, validator *validator.Client, emitter *events.Emitter, notifier *notify.Publisher, rulesEngine *rules.Engine) *Handler {
 	return &Handler{
 		pool:      pool,
 		deployer:  deployer,
 		publisher: publisher,
 		validator: validator,
-		emitter:   emiiter,
+		emitter:   emitter,
+		notifier:  notifier,
+		rules:     rulesEngine,
 		startAt:   time.Now(),
 	}
 }
@@ -688,6 +694,17 @@ func (h *Handler) ReportHealth(c *gin.Context) {
 		memPercent = float64(body.MemoryUsedKB) / float64(body.MemoryTotalKB) * 100
 	}
 
+	// Count consecutive unhealthy checks
+	var unhealthyCount int
+	h.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM (
+			SELECT status FROM health_checks
+			WHERE deployment_id = $1
+			ORDER BY checked_at DESC LIMIT 10
+		) sub WHERE status = 'unhealthy'`,
+		deployID,
+	).Scan(&unhealthyCount)
+
 	_, err := h.pool.Exec(c.Request.Context(),
 		`INSERT INTO health_checks (deployment_id, status, response_time_ms, cpu_percent, memory_bytes, memory_percent, fd_count)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -696,6 +713,43 @@ func (h *Handler) ReportHealth(c *gin.Context) {
 	if err != nil {
 		apiutil.RespondError(c, errors.Internal("failed to store health check", err))
 		return
+	}
+
+	// Evaluate Lua rules
+	if h.rules != nil {
+		// Get project name for the notification
+		var projectName string
+		h.pool.QueryRow(c.Request.Context(),
+			`SELECT p.name FROM projects p JOIN deployments d ON d.project_id = p.id WHERE d.id = $1`,
+			deployID,
+		).Scan(&projectName)
+
+		event := rules.HealthEvent{
+			DeployID:       deployID.String(),
+			Project:        projectName,
+			Healthy:        body.Healthy,
+			ResponseTimeMs: body.ResponseTimeMs,
+			CpuPercent:     body.CpuUsagePercent,
+			MemoryPercent:  memPercent,
+			UnhealthyCount: unhealthyCount,
+		}
+
+		// Default rules script — later this comes from project config
+		script := defaultRulesScript
+
+		actions := h.rules.Evaluate(event, script)
+		for _, action := range actions {
+			if action.Type == "notify" && h.notifier != nil {
+				h.notifier.PublishEmail(notify.EmailMessage{
+					To:       action.To,
+					Subject:  "[Bifrost] " + action.Severity + ": " + projectName,
+					Body:     action.Message,
+					Severity: action.Severity,
+					DeployID: deployID.String(),
+					Project:  projectName,
+				})
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
