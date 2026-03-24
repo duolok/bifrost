@@ -93,8 +93,8 @@ func TestBuildDeployment(t *testing.T) {
 
 	// Container
 	containers := dep.Spec.Template.Spec.Containers
-	if len(containers) != 1 {
-		t.Fatalf("expected 1 container, got %d", len(containers))
+	if len(containers) != 2 {
+		t.Fatalf("expected 2 containers (app + sidecar), got %d", len(containers))
 	}
 	c := containers[0]
 
