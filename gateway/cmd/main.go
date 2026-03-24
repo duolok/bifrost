@@ -97,8 +97,8 @@ func main() {
 	var notifier *notify.Publisher
 	if cfg.RabbitMqURL != "" {
 		var notifyErr error
-		notifier, notifyErr := notify.NewPublisher(cfg.RabbitMqURL)
-		if err != nil {
+		notifier, notifyErr = notify.NewPublisher(cfg.RabbitMqURL)
+		if notifyErr != nil {
 			slog.Warn("rabbitmq unavailable, notifications disabled", "error", notifyErr)
 			notifier = nil
 		} else {
