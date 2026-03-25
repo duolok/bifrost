@@ -2,7 +2,8 @@
        infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql \
        validator-build validator-run validator-deploy \
        realtime-build realtime-run realtime-deploy \
-       healthcheck-build healthcheck-run
+       healthcheck-build healthcheck-run \
+       analytics-run analytics-build
 
 dev:
 	docker compose up -d
@@ -64,6 +65,12 @@ realtime-deploy:
 	kubectl apply -f realtime/k8s/service.yaml
 	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=120s
 	@echo "==> Realtime deployed."
+
+analytics-run:
+	cd analytics && python -m src.main
+
+analytics-build:
+	docker build -t bifrost-analytics analytics/
 
 test-api:
 	@./scripts/bifrost.sh test-api
