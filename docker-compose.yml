@@ -36,6 +36,18 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  analytics:
+    build: ./analytics
+    environment:
+      BF_ANALYTICS_DATABASE_URL: postgresql://bifrost:localdev@postgres:5432/bifrost
+      BF_ANALYTICS_PORT: "8090"
+      BF_ANALYTICS_ENV: dev
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   pubsub-emulator:
     image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
