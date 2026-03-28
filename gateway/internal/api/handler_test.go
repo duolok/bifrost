@@ -12,11 +12,7 @@ import (
 
 	"duolok/bifrost/gateway/internal/api"
 	"duolok/bifrost/gateway/internal/testutil"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-var testPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
 	m.Run()
@@ -25,8 +21,7 @@ func TestMain(m *testing.M) {
 func setupRouter(t *testing.T) http.Handler {
 	t.Helper()
 	pool := testutil.SetupTestDB(t)
-	testPool = pool
-	return api.NewRouter(pool, nil, nil, nil, nil, nil, nil)
+	return api.NewRouter(api.HandlerDeps{Pool: pool})
 }
 
 func doJSON(router http.Handler, method, path string, body any) *httptest.ResponseRecorder {
