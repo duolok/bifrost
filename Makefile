@@ -133,11 +133,7 @@ cloud-down:
 	kubectl delete -f gateway/k8s/rbac.yaml 2>/dev/null || true
 	kubectl delete -f gateway/k8s/sa.yaml 2>/dev/null || true
 	kubectl delete -f builder/k8s/sa.yaml 2>/dev/null || true
-	@echo "==> Removing GKE cluster from Terraform state (deletion_protection workaround)..."
-	cd infra && terraform state rm google_container_cluster.primary 2>/dev/null || true
-	@echo "==> Deleting GKE cluster directly..."
-	gcloud container clusters delete bifrost-cluster --region $(GCP_REGION) --quiet 2>/dev/null || true
-	@echo "==> Destroying remaining Terraform resources..."
+	@echo "==> Destroying all Terraform resources..."
 	cd infra && terraform destroy -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
 	@echo "==> Done. All cloud resources destroyed."
 
@@ -159,6 +155,10 @@ cloud-deploy:
 	@echo "==> Getting kubectl credentials..."
 	gcloud container clusters get-credentials bifrost-cluster --region $(GCP_REGION) --project $(GCP_PROJECT)
 	kubectl create namespace bifrost-apps 2>/dev/null || true
+	@echo "==> Creating ConfigMap with DB IP..."
+	kubectl create configmap bifrost-config -n bifrost-apps \
+		--from-literal=database_url="host=$$(terraform -chdir=infra output -raw db_ip) user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable" \
+		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "==> Building and pushing gateway..."
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
@@ -215,7 +215,7 @@ cloud-deploy:
 	kubectl rollout restart deployment/bifrost-email -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-analytics -n bifrost-apps
 	@echo "==> Waiting for rollout..."
-	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=300s
+	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=600s
 	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=180s
