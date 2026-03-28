@@ -3,7 +3,8 @@
        validator-build validator-run validator-deploy \
        realtime-build realtime-run realtime-deploy \
        healthcheck-build healthcheck-run \
-       analytics-run analytics-build
+       analytics-run analytics-build \
+       email-build email-run
 
 dev:
 	docker compose up -d
@@ -72,6 +73,12 @@ analytics-run:
 analytics-build:
 	docker build -t bifrost-analytics analytics/
 
+email-build:
+	docker build -t bifrost-email email/
+
+email-run:
+	cd email && go run ./cmd/
+
 test-api:
 	@./scripts/bifrost.sh test-api
 
@@ -97,6 +104,8 @@ BUILDER_IMG    := $(REGISTRY)/builder:latest
 VALIDATOR_IMG  := $(REGISTRY)/validator:latest
 REALTIME_IMG       := $(REGISTRY)/realtime:latest
 HEALTHCHECK_IMG    := $(REGISTRY)/healthcheck:latest
+EMAIL_IMG          := $(REGISTRY)/email:latest
+ANALYTICS_IMG      := $(REGISTRY)/analytics:latest
 VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
 GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
@@ -111,6 +120,11 @@ cloud-up:
 # Tear down everything
 cloud-down:
 	@echo "==> Deleting GKE workloads..."
+	kubectl delete -f analytics/k8s/service.yaml 2>/dev/null || true
+	kubectl delete -f analytics/k8s/deployment.yaml 2>/dev/null || true
+	kubectl delete -f email/k8s/deployment.yaml 2>/dev/null || true
+	kubectl delete -f rabbitmq/k8s/service.yaml 2>/dev/null || true
+	kubectl delete -f rabbitmq/k8s/deployment.yaml 2>/dev/null || true
 	kubectl delete -f realtime/k8s/service.yaml 2>/dev/null || true
 	kubectl delete -f realtime/k8s/deployment.yaml 2>/dev/null || true
 	kubectl delete -f builder/k8s/deployment.yaml 2>/dev/null || true
@@ -173,6 +187,12 @@ cloud-deploy:
 	@echo "==> Building and pushing realtime..."
 	docker build -t $(REALTIME_IMG) realtime/
 	docker push $(REALTIME_IMG)
+	@echo "==> Building and pushing email worker..."
+	docker build -t $(EMAIL_IMG) email/
+	docker push $(EMAIL_IMG)
+	@echo "==> Building and pushing analytics..."
+	docker build -t $(ANALYTICS_IMG) analytics/
+	docker push $(ANALYTICS_IMG)
 	@echo "==> Applying K8s manifests..."
 	kubectl apply -f gateway/k8s/sa.yaml
 	kubectl apply -f gateway/k8s/rbac.yaml
@@ -182,14 +202,25 @@ cloud-deploy:
 	kubectl apply -f builder/k8s/deployment.yaml
 	kubectl apply -f realtime/k8s/deployment.yaml
 	kubectl apply -f realtime/k8s/service.yaml
+	kubectl apply -f rabbitmq/k8s/deployment.yaml
+	kubectl apply -f rabbitmq/k8s/service.yaml
+	kubectl apply -f email/k8s/deployment.yaml
+	kubectl apply -f analytics/k8s/deployment.yaml
+	kubectl apply -f analytics/k8s/service.yaml
 	@echo "==> Restarting deployments to pick up new images..."
 	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-realtime -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-rabbitmq -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-email -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-analytics -n bifrost-apps
 	@echo "==> Waiting for rollout..."
+	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-email -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-analytics -n bifrost-apps --timeout=180s
 	@echo "==> All services deployed."
 	@echo "=== Pod Status ==="
 	@kubectl get pods -n bifrost-apps
