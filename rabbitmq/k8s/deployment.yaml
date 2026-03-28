@@ -28,18 +28,18 @@ spec:
               value: "localdev"
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
               cpu: "250m"
               memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
           readinessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "ping"]
-            initialDelaySeconds: 10
+            tcpSocket:
+              port: 5672
+            initialDelaySeconds: 120
             periodSeconds: 10
           livenessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "ping"]
-            initialDelaySeconds: 30
+            tcpSocket:
+              port: 5672
+            initialDelaySeconds: 240
             periodSeconds: 30
