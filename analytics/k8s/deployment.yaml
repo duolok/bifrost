@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-analytics
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-analytics
+  template:
+    metadata:
+      labels:
+        app: bifrost-analytics
+    spec:
+      containers:
+        - name: analytics
+          image: europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/analytics:latest
+          ports:
+            - containerPort: 8090
+          env:
+            - name: BF_ANALYTICS_DATABASE_URL
+              value: "host=34.118.15.91 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
+            - name: BF_ANALYTICS_PORT
+              value: "8090"
+            - name: BF_ANALYTICS_ENV
+              value: "prod"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 10
+            periodSeconds: 30
