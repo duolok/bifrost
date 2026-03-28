@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,7 @@ pub struct Project {
     pub default_branch: String,
     pub status: String,
     pub created_at: String,
+    pub webhook_secret: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,12 +44,41 @@ struct DeployRequest {
     commit_sha: String,
 }
 
+#[derive(Serialize)]
+struct CreateProjectRequest {
+    name: String,
+    repo_url: String,
+}
+
 impl BifrostClient {
     pub fn new(base_url: &str) -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url: base_url.trim_end_matches('/').to_string(),
         }
+    }
+
+    pub async fn create_project(&self, name: &str, repo_url: &str) -> Result<Project> {
+        let resp = self.http
+            .post(format!("{}/api/v1/project", self.base_url))
+            .json(&CreateProjectRequest {
+                name: name.to_string(),
+                repo_url: repo_url.to_string(),
+            })
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?
+            .json::<Project>().await?;
+        Ok(resp)
+    }
+
+    pub async fn delete_project(&self, id: &str) -> Result<()> {
+        self.http
+            .delete(format!("{}/api/v1/project/{}", self.base_url, id))
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?;
+        Ok(())
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
