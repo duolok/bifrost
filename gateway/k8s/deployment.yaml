@@ -40,6 +40,8 @@ spec:
               value: "https://bifrost-validator-274528789467.europe-central2.run.app"
             - name: BF_REALTIME_URL
               value: "bifrost-realtime:50051"
+            - name: BF_RABBITMQ_URL
+              value: "amqp://bifrost:localdev@bifrost-rabbitmq:5672/"
           resources:
             requests:
               cpu: "250m"
