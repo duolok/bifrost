@@ -215,7 +215,7 @@ cloud-deploy:
 	kubectl rollout restart deployment/bifrost-email -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-analytics -n bifrost-apps
 	@echo "==> Waiting for rollout..."
-	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=300s
 	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-builder -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=180s
