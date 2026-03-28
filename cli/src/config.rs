@@ -6,7 +6,7 @@ pub struct Config {
 
 pub fn load() -> Config {
     Config {
-        gateway_url: env::var("BIFROST_GATEWAY_URL)
-            .unwrap_or_else(|_| "http://localhost:8080".into())
+        gateway_url: env::var("BIFROST_GATEWAY_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".into()),
     }
 }
