@@ -27,7 +27,10 @@ spec:
             - name: BF_ENV
               value: "prod"
             - name: BF_DATABASE_URL
-              value: "host=34.118.15.91 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: database_url
             - name: BF_GCP_PROJECT
               value: "bifrost-platform"
             - name: BF_AR_REPO
