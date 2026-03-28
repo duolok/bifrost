@@ -70,15 +70,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load();
     let gateway_url = cli.gateway.unwrap_or(cfg.gateway_url);
+    let realtime_url = cfg.realtime_url;
     let client = client::BifrostClient::new(&gateway_url);
 
     match cli.command {
         Commands::Deploy(args) => commands::deploy::run(&client, args).await,
         Commands::Status(args) => commands::status::run(&client, args).await,
-        Commands::Logs(_args) => {
-            println!("Log streaming not implemented yet");
-            Ok(())
-        }
+        Commands::Logs(args) => commands::logs::run(&realtime_url, args).await,
         Commands::Projects { action } => commands::projects::run(&client, action).await,
     }
 }
