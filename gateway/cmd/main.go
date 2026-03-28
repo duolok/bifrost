@@ -107,7 +107,15 @@ func main() {
 	}
 
 	rulesEngine := rules.NewEngine(notifier)
-	router := api.NewRouter(pool, deployer, publisher, validatorClient, emitter, notifier, rulesEngine)
+	router := api.NewRouter(api.HandlerDeps{
+		Pool:      pool,
+		Deployer:  deployer,
+		Publisher: publisher,
+		Validator: validatorClient,
+		Emitter:   emitter,
+		Notifier:  notifier,
+		Rules:     rulesEngine,
+	})
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
