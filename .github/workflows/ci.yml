@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bifrost
+          POSTGRES_PASSWORD: localdev
+          POSTGRES_DB: bifrost
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bifrost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run migrations
+        run: PGPASSWORD=localdev psql -h localhost -U bifrost -d bifrost -f scripts/migrations/001_init.sql
+
+      - name: Gateway tests
+        working-directory: gateway
+        run: go test ./... -v
+
+      - name: Analytics tests
+        working-directory: analytics
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          python -m pytest tests/ -v
