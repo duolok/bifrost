@@ -2,6 +2,7 @@ package api
 
 import (
 	stderrors "errors"
+	"log/slog"
 	"net/http"
 
 	"duolok/bifrost/gateway/internal/errors"
@@ -121,6 +122,8 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 		return
 	}
 
+	projectName, _ := h.fetchProjectMeta(c.Request.Context(), id)
+
 	tag, err := h.pool.Exec(c.Request.Context(),
 		`UPDATE projects SET status = $1, updated_at = NOW()
 		 WHERE id = $2 AND status != $1`, models.ProjectArchived, id)
@@ -132,6 +135,12 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 	if tag.RowsAffected() == 0 {
 		apiutil.RespondError(c, errors.NotFound(resourceProject, id))
 		return
+	}
+
+	if h.deployer != nil && projectName != "" {
+		if err := h.deployer.Delete(c.Request.Context(), projectName); err != nil {
+			slog.Warn("failed to delete k8s resources", "project", projectName, "error", err)
+		}
 	}
 
 	h.audit(c, auditProjectDeleted, resourceProject, id, nil)
