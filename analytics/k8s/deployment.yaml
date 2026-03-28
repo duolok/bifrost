@@ -22,7 +22,10 @@ spec:
             - containerPort: 8090
           env:
             - name: BF_ANALYTICS_DATABASE_URL
-              value: "host=34.118.15.91 user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable"
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: database_url
             - name: BF_ANALYTICS_PORT
               value: "8090"
             - name: BF_ANALYTICS_ENV
