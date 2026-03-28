@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-email
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-email
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-email
+  template:
+    metadata:
+      labels:
+        app: bifrost-email
+    spec:
+      containers:
+        - name: email-worker
+          image: europe-central2-docker.pkg.dev/bifrost-platform/bifrost-platform/email:latest
+          env:
+            - name: BF_RABBITMQ_URL
+              value: "amqp://bifrost:localdev@bifrost-rabbitmq:5672/"
+            - name: BF_SMTP_HOST
+              value: "smtp.gmail.com"
+            - name: BF_SMTP_PORT
+              value: "587"
+            - name: BF_SMTP_FROM
+              value: "bifrost@bifrost.dev"
+            - name: BF_SMTP_PASSWORD
+              value: ""
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
