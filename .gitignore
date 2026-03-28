@@ -10,6 +10,7 @@ gateway/gateway
 
 # Rust
 builder/target
+cli/target
 
 # OCaml
 validator/_build
