@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bifrost-rabbitmq
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-rabbitmq
+spec:
+  type: ClusterIP
+  selector:
+    app: bifrost-rabbitmq
+  ports:
+    - port: 5672
+      targetPort: 5672
+      name: amqp

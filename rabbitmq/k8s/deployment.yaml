@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-rabbitmq
+  namespace: bifrost-apps
+  labels:
+    app: bifrost-rabbitmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bifrost-rabbitmq
+  template:
+    metadata:
+      labels:
+        app: bifrost-rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-alpine
+          ports:
+            - containerPort: 5672
+              name: amqp
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: "bifrost"
+            - name: RABBITMQ_DEFAULT_PASS
+              value: "localdev"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
