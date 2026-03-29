@@ -57,7 +57,7 @@ func selectorLabels(project models.Project) map[string]string {
 	}
 }
 
-func BuildDeployment(project models.Project, deployment models.Deployment, namespace string) *appsv1.Deployment {
+func BuildDeployment(project models.Project, deployment models.Deployment, namespace string, secrets map[string]string) *appsv1.Deployment {
 	replicas := defaultReplicas
 	name := resourceName(project.Name)
 	allLabels := labels(project, deployment)
@@ -72,6 +72,12 @@ func BuildDeployment(project models.Project, deployment models.Deployment, names
 	imageURI := "placeholder:latest"
 	if deployment.ImageURI != nil {
 		imageURI = *deployment.ImageURI
+	}
+
+	// Build env vars from project secrets
+	var envVars []corev1.EnvVar
+	for key, val := range secrets {
+		envVars = append(envVars, corev1.EnvVar{Name: key, Value: val})
 	}
 
 	return &appsv1.Deployment{
@@ -94,6 +100,7 @@ func BuildDeployment(project models.Project, deployment models.Deployment, names
 						{
 							Name:  sanitizeName(project.Name),
 							Image: imageURI,
+							Env:   envVars,
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",
