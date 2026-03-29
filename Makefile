@@ -80,7 +80,10 @@ cloud-up:
 	@echo "==> Applying Terraform..."
 	cd infra && terraform apply -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
 	@echo "==> Running migrations..."
-	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost -f scripts/migrations/001_init.sql 2>/dev/null || echo "Tables already exist"
+	@for f in scripts/migrations/*.sql; do \
+		echo "  Running $$f..."; \
+		PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost -f $$f 2>/dev/null || echo "  (already applied)"; \
+	done
 	@$(MAKE) cloud-deploy
 
 # Tear down everything
