@@ -27,6 +27,11 @@ func NewRouter(deps HandlerDeps) *gin.Engine {
 		apiGroup.POST("/deployments/:id/deploy", h.DeployBuilt)
 		apiGroup.POST("/deployments/:id/retry", h.RetryDeploy)
 		apiGroup.POST("/deployments/:id/health", h.ReportHealth)
+		apiGroup.POST("/projects/:id/rollback", h.Rollback)
+
+		apiGroup.GET("/projects/:id/secrets", h.ListSecrets)
+		apiGroup.POST("/projects/:id/secrets", h.SetSecret)
+		apiGroup.DELETE("/projects/:id/secrets/:key", h.DeleteSecret)
 
 		apiGroup.POST("/webhook/github", h.HandleGitHubWebhook)
 	}
