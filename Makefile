@@ -1,10 +1,10 @@
 .PHONY: dev down clean gateway-run gateway-build test-api migrate psql \
        infra-plan infra-apply cloud-up cloud-down cloud-status cloud-deploy cloud-psql \
-       validator-build validator-run validator-deploy \
-       realtime-build realtime-run realtime-deploy \
+       validator-build validator-run \
+       realtime-run \
        healthcheck-build healthcheck-run \
-       analytics-run analytics-build \
-       email-build email-run
+       analytics-run \
+       email-run
 
 dev:
 	docker compose up -d
@@ -30,24 +30,6 @@ validator-build:
 validator-run:
 	cd validator && opam exec -- dune exec bin/main.exe
 
-validator-deploy:
-	@echo "==> Building and pushing validator..."
-	docker build -t $(VALIDATOR_IMG) validator/
-	docker push $(VALIDATOR_IMG)
-	@echo "==> Deploying validator to Cloud Run..."
-	gcloud run deploy bifrost-validator \
-		--image=$(VALIDATOR_IMG) \
-		--region=$(GCP_REGION) \
-		--project=$(GCP_PROJECT) \
-		--port=8090 \
-		--allow-unauthenticated \
-		--min-instances=0 \
-		--max-instances=3 \
-		--memory=256Mi \
-		--cpu=1
-	@echo "==> Validator URL:"
-	@gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)'
-
 healthcheck-build:
 	cd healthcheck && zig build -Doptimize=ReleaseSmall
 
@@ -57,24 +39,8 @@ healthcheck-run:
 realtime-run:
 	cd realtime && mix phx.server
 
-realtime-deploy:
-	@echo "==> Building and pushing realtime..."
-	docker build -t $(REALTIME_IMG) realtime/
-	docker push $(REALTIME_IMG)
-	@echo "==> Deploying realtime to GKE..."
-	kubectl apply -f realtime/k8s/deployment.yaml
-	kubectl apply -f realtime/k8s/service.yaml
-	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=120s
-	@echo "==> Realtime deployed."
-
 analytics-run:
 	cd analytics && python -m src.main
-
-analytics-build:
-	docker build -t bifrost-analytics analytics/
-
-email-build:
-	docker build -t bifrost-email email/
 
 email-run:
 	cd email && go run ./cmd/
