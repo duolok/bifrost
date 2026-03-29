@@ -44,6 +44,34 @@ struct DeployRequest {
     commit_sha: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RollbackResponse {
+    pub status: String,
+    pub deployment_id: String,
+    pub rolled_back_to: String,
+    pub previous_deploy: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Secret {
+    pub id: String,
+    pub project_id: String,
+    pub key_name: String,
+    pub secret_ref: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+struct SecretsResponse {
+    secrets: Vec<Secret>,
+}
+
+#[derive(Serialize)]
+struct SetSecretRequest {
+    key_name: String,
+    secret_ref: String,
+}
+
 #[derive(Serialize)]
 struct CreateProjectRequest {
     name: String,
@@ -120,6 +148,49 @@ impl BifrostClient {
             .error_for_status()?
             .json::<Deployment>().await?;
         Ok(resp)
+    }
+
+    pub async fn rollback(&self, project_id: &str) -> Result<RollbackResponse> {
+        let resp = self.http
+            .post(format!("{}/api/v1/projects/{}/rollback", self.base_url, project_id))
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?
+            .json::<RollbackResponse>().await?;
+        Ok(resp)
+    }
+
+    pub async fn list_secrets(&self, project_id: &str) -> Result<Vec<Secret>> {
+        let resp = self.http
+            .get(format!("{}/api/v1/projects/{}/secrets", self.base_url, project_id))
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?
+            .json::<SecretsResponse>().await?;
+        Ok(resp.secrets)
+    }
+
+    pub async fn set_secret(&self, project_id: &str, key_name: &str, secret_ref: &str) -> Result<Secret> {
+        let resp = self.http
+            .post(format!("{}/api/v1/projects/{}/secrets", self.base_url, project_id))
+            .json(&SetSecretRequest {
+                key_name: key_name.to_string(),
+                secret_ref: secret_ref.to_string(),
+            })
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?
+            .json::<Secret>().await?;
+        Ok(resp)
+    }
+
+    pub async fn delete_secret(&self, project_id: &str, key_name: &str) -> Result<()> {
+        self.http
+            .delete(format!("{}/api/v1/projects/{}/secrets/{}", self.base_url, project_id, key_name))
+            .send().await
+            .context("failed to reach gateway")?
+            .error_for_status()?;
+        Ok(())
     }
 
     pub async fn list_deployments(&self, project_id: &str) -> Result<Vec<Deployment>> {
