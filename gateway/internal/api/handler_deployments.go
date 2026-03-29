@@ -229,6 +229,92 @@ func (h *Handler) RetryDeploy(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
+func (h *Handler) Rollback(c *gin.Context) {
+	if h.deployer == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "k8s deployer not configured"})
+		return
+	}
+
+	projectID, ok := apiutil.ParseID(c, "id", resourceProject)
+	if !ok {
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Find the last successful deployment for this project
+	var prev models.Deployment
+	err := scanDeployment(h.pool.QueryRow(ctx,
+		deploymentSelectSQL+` WHERE project_id = $1 AND status IN ($2, $3)
+		 ORDER BY deploy_finished_at DESC LIMIT 1`,
+		projectID, models.StatusRunning, models.StatusHealthy,
+	), &prev)
+
+	if err != nil {
+		if stderrors.Is(err, pgx.ErrNoRows) {
+			apiutil.RespondError(c, errors.NotFound("healthy deployment", projectID))
+			return
+		}
+		apiutil.RespondError(c, errors.Internal("failed to find previous deployment", err))
+		return
+	}
+
+	if prev.ImageURI == nil || *prev.ImageURI == "" {
+		apiutil.RespondError(c, errors.InvalidInput("previous deployment has no image_uri"))
+		return
+	}
+
+	// Create a new deployment record at "built" status (skip build pipeline).
+	// Use rollback:{original_id} as commit_sha to avoid UNIQUE(project_id, commit_sha) conflict.
+	rollbackSHA := "rollback:" + prev.ID.String()[:8]
+	var d models.Deployment
+	err = h.pool.QueryRow(ctx,
+		`INSERT INTO deployments (project_id, commit_sha, branch, triggered_by, image_uri, config_snapshot, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, project_id, commit_sha, branch, triggered_by, image_uri, status, created_at`,
+		projectID, rollbackSHA, prev.Branch, triggerRollback, prev.ImageURI, prev.ConfigSnapshot, models.StatusBuilt,
+	).Scan(&d.ID, &d.ProjectID, &d.CommitSHA, &d.Branch, &d.TriggeredBy, &d.ImageURI, &d.Status, &d.CreatedAt)
+
+	if err != nil {
+		apiutil.RespondError(c, errors.Internal("failed to create rollback deployment", err))
+		return
+	}
+
+	// Fetch full project for deployer
+	var p models.Project
+	err = h.pool.QueryRow(ctx,
+		`SELECT id, name, repo_url, default_branch, config, status, created_at, updated_at
+		 FROM projects WHERE id = $1`, projectID,
+	).Scan(&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.Config, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		apiutil.RespondError(c, errors.Internal("failed to get project", err))
+		return
+	}
+
+	h.audit(c, auditDeployRollback, resourceDeployment, d.ID, gin.H{
+		"project":         p.Name,
+		"rollback_to":     prev.ID,
+		"rollback_commit": prev.CommitSHA,
+	})
+
+	h.emitter.Emit("deploy.rollback", d.ID.String(), p.Name, "Rolling back to "+prev.CommitSHA[:8])
+
+	// Deploy using the existing image
+	if err := h.deployer.Deploy(ctx, d, p); err != nil {
+		h.audit(c, auditDeployFailed, resourceDeployment, d.ID, gin.H{"error": err.Error()})
+		apiutil.RespondError(c, errors.DeployFailed("rollback deployment failed", err))
+		return
+	}
+
+	d, _ = h.fetchDeployment(ctx, d.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"status":          "rolled_back",
+		"deployment_id":   d.ID,
+		"rolled_back_to":  prev.CommitSHA,
+		"previous_deploy": prev.ID,
+	})
+}
+
 // validateAndBuild runs OCaml validation then publishes a build request.
 func (h *Handler) validateAndBuild(c *gin.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
 	ctx := c.Request.Context()
