@@ -20,9 +20,14 @@ enum Commands {
   Deploy(DeployArgs),
   Status(StatusArgs),
   Logs(LogsArgs),
+  Rollback(RollbackArgs),
   Projects {
       #[command(subcommand)]
       action: ProjectAction,
+  },
+  Secrets {
+      #[command(subcommand)]
+      action: SecretAction,
   },
 }
 
@@ -44,6 +49,36 @@ pub struct StatusArgs {
 #[derive(Args)]
 pub struct LogsArgs {
   pub deployment_id: String,
+}
+
+#[derive(Args)]
+pub struct RollbackArgs {
+  #[arg(short, long)]
+  pub project: String,
+}
+
+#[derive(Subcommand)]
+pub enum SecretAction {
+  List {
+      #[arg(short, long)]
+      project: String,
+  },
+
+  Set {
+      #[arg(short, long)]
+      project: String,
+      #[arg(short, long)]
+      key: String,
+      #[arg(long)]
+      secret_ref: String,
+  },
+
+  Delete {
+      #[arg(short, long)]
+      project: String,
+      #[arg(short, long)]
+      key: String,
+  },
 }
 
 #[derive(Subcommand)]
@@ -77,6 +112,8 @@ async fn main() -> Result<()> {
         Commands::Deploy(args) => commands::deploy::run(&client, args).await,
         Commands::Status(args) => commands::status::run(&client, args).await,
         Commands::Logs(args) => commands::logs::run(&realtime_url, args).await,
+        Commands::Rollback(args) => commands::rollback::run(&client, args).await,
         Commands::Projects { action } => commands::projects::run(&client, action).await,
+        Commands::Secrets { action } => commands::secrets::run(&client, action).await,
     }
 }
