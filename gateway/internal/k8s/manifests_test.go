@@ -71,7 +71,7 @@ func TestBuildDeployment(t *testing.T) {
 	p := testProject()
 	d := testDeployment()
 
-	dep := BuildDeployment(p, d, "bifrost-apps")
+	dep := BuildDeployment(p, d, "bifrost-apps", nil)
 
 	if dep.Name != "bifrost-my-api" {
 		t.Errorf("expected name bifrost-my-api, got %s", dep.Name)
@@ -138,7 +138,7 @@ func TestBuildDeploymentPlaceholderImage(t *testing.T) {
 	d := testDeployment()
 	d.ImageURI = nil
 
-	dep := BuildDeployment(p, d, "default")
+	dep := BuildDeployment(p, d, "default", nil)
 	c := dep.Spec.Template.Spec.Containers[0]
 	if c.Image != "placeholder:latest" {
 		t.Errorf("expected placeholder image, got %s", c.Image)
