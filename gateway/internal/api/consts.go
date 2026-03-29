@@ -11,8 +11,10 @@ const (
 	auditDeployComplete  = "deployment.deployed"
 	auditDeployFailed    = "deployment.failed"
 	auditDeployRetried   = "deployment.retried"
+	auditDeployRollback  = "deployment.rollback"
 
 	triggerAPI           = "api"
+	triggerRollback      = "rollback"
 	triggerGitHubWebhook = "github-webhook"
 
 	pgUniqueViolation = "23505"
