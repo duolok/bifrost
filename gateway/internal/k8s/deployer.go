@@ -139,7 +139,14 @@ func (d *Deployer) Delete(ctx context.Context, projectName string) error {
 }
 
 func (d *Deployer) applyManifests(ctx context.Context, project models.Project, deployment models.Deployment) error {
-	dep := BuildDeployment(project, deployment, d.namespace)
+	// Fetch project secrets from DB
+	secrets, err := d.fetchSecrets(ctx, project.ID.String())
+	if err != nil {
+		slog.Warn("failed to fetch project secrets, deploying without", "project", project.Name, "error", err)
+		secrets = map[string]string{}
+	}
+
+	dep := BuildDeployment(project, deployment, d.namespace, secrets)
 	if err := d.applyDeployment(ctx, dep); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
 	}
@@ -185,6 +192,25 @@ func (d *Deployer) applyService(ctx context.Context, svc *corev1.Service) error 
 	svc.Spec.ClusterIP = existing.Spec.ClusterIP // ClusterIP is immutable
 	_, err = client.Update(ctx, svc, metav1.UpdateOptions{})
 	return err
+}
+
+func (d *Deployer) fetchSecrets(ctx context.Context, projectID string) (map[string]string, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT key_name, secret_ref FROM project_secrets WHERE project_id = $1`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	secrets := map[string]string{}
+	for rows.Next() {
+		var key, ref string
+		if err := rows.Scan(&key, &ref); err != nil {
+			return nil, err
+		}
+		secrets[key] = ref
+	}
+	return secrets, nil
 }
 
 func (d *Deployer) transitionStatus(ctx context.Context, deployID uuid.UUID, from, to models.DeploymentStatus, message string) error {
