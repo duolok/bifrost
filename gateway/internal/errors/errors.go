@@ -15,6 +15,8 @@ const (
 	ErrDeployFailed     Code = "DEPLOY_FAILED"
 	ErrUpstreamTimeout  Code = "UPSTREAM_TIMEOUT"
 	ErrInternal         Code = "INTERNAL"
+	ErrUnauthorized     Code = "UNAUTHORIZED"
+	ErrForbidden        Code = "FORBIDDEN"
 )
 
 type AppError struct {
@@ -74,6 +76,20 @@ func DeployFailed(message string, cause error) *AppError {
 	}
 }
 
+func Unauthorized(message string) *AppError {
+	return &AppError{
+		Code:    ErrUnauthorized,
+		Message: message,
+	}
+}
+
+func Forbidden(message string) *AppError {
+	return &AppError{
+		Code:    ErrForbidden,
+		Message: message,
+	}
+}
+
 func StatusCode(err *AppError) int {
 	switch err.Code {
 	case ErrNotFound:
@@ -82,6 +98,10 @@ func StatusCode(err *AppError) int {
 		return 409
 	case ErrInvalidInput, ErrValidationFailed:
 		return 400
+	case ErrUnauthorized:
+		return 401
+	case ErrForbidden:
+		return 403
 	case ErrUpstreamTimeout:
 		return 504
 	default:
