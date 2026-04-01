@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/rand"
+	"encoding/hex"
+
 	"duolok/bifrost/gateway/internal/api"
 	"duolok/bifrost/gateway/internal/db"
 	"duolok/bifrost/gateway/internal/events"
@@ -106,6 +109,18 @@ func main() {
 		}
 	}
 
+	// JWT secret: use env var or generate a random one for dev
+	jwtSecret := []byte(cfg.JWTSecret)
+	if len(jwtSecret) == 0 {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			slog.Error("failed to generate JWT secret", "error", err)
+			os.Exit(1)
+		}
+		jwtSecret = []byte(hex.EncodeToString(b))
+		slog.Warn("BF_JWT_SECRET not set, using random secret (tokens won't survive restarts)")
+	}
+
 	rulesEngine := rules.NewEngine(notifier)
 	router := api.NewRouter(api.HandlerDeps{
 		Pool:      pool,
@@ -115,7 +130,8 @@ func main() {
 		Emitter:   emitter,
 		Notifier:  notifier,
 		Rules:     rulesEngine,
-	})
+		JWTSecret: jwtSecret,
+	}, jwtSecret, pool)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -157,6 +173,7 @@ type GatewayConfig struct {
 	RealtimeURL   string
 	ValidatorURL  string
 	RabbitMqURL   string
+	JWTSecret     string
 }
 
 func loadConfig() GatewayConfig {
@@ -175,6 +192,7 @@ func loadConfig() GatewayConfig {
 		RealtimeURL:   os.Getenv("BF_REALTIME_URL"),
 		ValidatorURL:  os.Getenv("BF_VALIDATOR_URL"),
 		RabbitMqURL:   envOr("BF_RABBITMQ_URL", "amqp://bifrost:localdev@localhost:5672/"),
+		JWTSecret:     os.Getenv("BF_JWT_SECRET"),
 	}
 }
 
