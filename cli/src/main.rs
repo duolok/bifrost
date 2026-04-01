@@ -17,6 +17,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+  Auth {
+      #[command(subcommand)]
+      action: AuthAction,
+  },
   Deploy(DeployArgs),
   Status(StatusArgs),
   Logs(LogsArgs),
@@ -29,6 +33,18 @@ enum Commands {
       #[command(subcommand)]
       action: SecretAction,
   },
+}
+
+#[derive(Subcommand)]
+pub enum AuthAction {
+  /// Log in with email and password
+  Login,
+  /// Create a new account
+  Register,
+  /// Log out and clear stored token
+  Logout,
+  /// Show current user info
+  Me,
 }
 
 #[derive(Args)]
@@ -104,11 +120,13 @@ pub enum ProjectAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load();
+    let token = config::load_token();
     let gateway_url = cli.gateway.unwrap_or(cfg.gateway_url);
     let realtime_url = cfg.realtime_url;
-    let client = client::BifrostClient::new(&gateway_url);
+    let client = client::BifrostClient::new(&gateway_url, token);
 
     match cli.command {
+        Commands::Auth { action } => commands::auth::run(&client, action).await,
         Commands::Deploy(args) => commands::deploy::run(&client, args).await,
         Commands::Status(args) => commands::status::run(&client, args).await,
         Commands::Logs(args) => commands::logs::run(&realtime_url, args).await,
