@@ -12,6 +12,11 @@ const (
 	auditDeployFailed    = "deployment.failed"
 	auditDeployRetried   = "deployment.retried"
 	auditDeployRollback  = "deployment.rollback"
+	auditUserRegister    = "user.registered"
+	auditAPIKeyCreated   = "apikey.created"
+	auditAPIKeyRevoked   = "apikey.revoked"
+	auditTeamInvite      = "team.invite"
+	auditTeamRemove      = "team.remove"
 
 	triggerAPI           = "api"
 	triggerRollback      = "rollback"
