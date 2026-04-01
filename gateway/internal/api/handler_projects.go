@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"duolok/bifrost/gateway/internal/errors"
+	"duolok/bifrost/gateway/internal/middleware"
 	"duolok/bifrost/gateway/internal/models"
 	"duolok/bifrost/gateway/pkg/apiutil"
 
@@ -31,12 +32,14 @@ func (h *Handler) CreateProject(c *gin.Context) {
 		return
 	}
 
+	teamID := middleware.GetTeamID(c)
+
 	var p models.Project
 	err = h.pool.QueryRow(c.Request.Context(),
-		`INSERT INTO projects (name, repo_url, default_branch, webhook_secret)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO projects (name, repo_url, default_branch, webhook_secret, team_id)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, name, repo_url, default_branch, webhook_secret, config, status, created_at, updated_at`,
-		req.Name, req.RepoURL, req.DefaultBranch, secret,
+		req.Name, req.RepoURL, req.DefaultBranch, secret, teamID,
 	).Scan(&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.WebhookSecret, &p.Config, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 
 	if err != nil {
@@ -67,11 +70,12 @@ func (h *Handler) CreateProject(c *gin.Context) {
 }
 
 func (h *Handler) ListProjects(c *gin.Context) {
+	teamID := middleware.GetTeamID(c)
 	rows, err := h.pool.Query(c.Request.Context(),
 		`SELECT id, name, repo_url, default_branch, config, status, created_at, updated_at
 		 FROM projects
-		 WHERE status != $1
-		 ORDER BY created_at DESC`, models.ProjectArchived)
+		 WHERE status != $1 AND team_id = $2
+		 ORDER BY created_at DESC`, models.ProjectArchived, teamID)
 	if err != nil {
 		apiutil.RespondError(c, errors.Internal("failed to list projects", err))
 		return
@@ -96,12 +100,13 @@ func (h *Handler) GetProject(c *gin.Context) {
 	if !ok {
 		return
 	}
+	teamID := middleware.GetTeamID(c)
 
 	var p models.Project
 	err := h.pool.QueryRow(c.Request.Context(),
 		`SELECT id, name, repo_url, default_branch, config, status, created_at, updated_at
 		 FROM projects
-		 WHERE id = $1`, id,
+		 WHERE id = $1 AND team_id = $2`, id, teamID,
 	).Scan(&p.ID, &p.Name, &p.RepoURL, &p.DefaultBranch, &p.Config, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 
 	if err != nil {
@@ -121,12 +126,13 @@ func (h *Handler) DeleteProject(c *gin.Context) {
 	if !ok {
 		return
 	}
+	teamID := middleware.GetTeamID(c)
 
 	projectName, _ := h.fetchProjectMeta(c.Request.Context(), id)
 
 	tag, err := h.pool.Exec(c.Request.Context(),
 		`UPDATE projects SET status = $1, updated_at = NOW()
-		 WHERE id = $2 AND status != $1`, models.ProjectArchived, id)
+		 WHERE id = $2 AND team_id = $3 AND status != $1`, models.ProjectArchived, id, teamID)
 	if err != nil {
 		apiutil.RespondError(c, errors.Internal("failed to delete project", err))
 		return
