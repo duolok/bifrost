@@ -121,6 +121,22 @@ func main() {
 		slog.Warn("BF_JWT_SECRET not set, using random secret (tokens won't survive restarts)")
 	}
 
+	oauthCfg := &api.OAuthConfig{
+		GoogleClientID:     cfg.GoogleClientID,
+		GoogleClientSecret: cfg.GoogleClientSecret,
+		GitHubClientID:     cfg.GitHubClientID,
+		GitHubClientSecret: cfg.GitHubClientSecret,
+		CallbackBaseURL:    cfg.AuthCallbackURL,
+	}
+
+	if oauthCfg.GoogleEnabled() {
+		slog.Info("Google OAuth configured")
+	}
+
+	if oauthCfg.GitHubEnabled() {
+		slog.Info("GitHub OAuth configured")
+	}
+
 	rulesEngine := rules.NewEngine(notifier)
 	router := api.NewRouter(api.HandlerDeps{
 		Pool:      pool,
@@ -131,6 +147,7 @@ func main() {
 		Notifier:  notifier,
 		Rules:     rulesEngine,
 		JWTSecret: jwtSecret,
+		OAuth:     oauthCfg,
 	}, jwtSecret, pool)
 
 	srv := &http.Server{
@@ -162,18 +179,23 @@ func main() {
 }
 
 type GatewayConfig struct {
-	Port          string
-	Env           string
-	DatabaseURL   string
-	GCPProject    string
-	ARRepo        string
-	K8sInCluster  bool
-	K8sKubeconfig string
-	K8sNamespace  string
-	RealtimeURL   string
-	ValidatorURL  string
-	RabbitMqURL   string
-	JWTSecret     string
+	Port               string
+	Env                string
+	DatabaseURL        string
+	GCPProject         string
+	ARRepo             string
+	K8sInCluster       bool
+	K8sKubeconfig      string
+	K8sNamespace       string
+	RealtimeURL        string
+	ValidatorURL       string
+	RabbitMqURL        string
+	JWTSecret          string
+	GoogleClientID     string
+	GoogleClientSecret string
+	GitHubClientID     string
+	GitHubClientSecret string
+	AuthCallbackURL    string
 }
 
 func loadConfig() GatewayConfig {
@@ -181,18 +203,23 @@ func loadConfig() GatewayConfig {
 	defaultKubeconfig := filepath.Join(home, ".kube", "config")
 
 	return GatewayConfig{
-		Port:          envOr("BF_PORT", "8080"),
-		Env:           envOr("BF_ENV", "dev"),
-		DatabaseURL:   envOr("BF_DATABASE_URL", "postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable"),
-		GCPProject:    os.Getenv("BF_GCP_PROJECT"),
-		ARRepo:        os.Getenv("BF_AR_REPO"),
-		K8sInCluster:  os.Getenv("BF_K8S_IN_CLUSTER") == "true",
-		K8sKubeconfig: envOr("BF_KUBECONFIG", defaultKubeconfig),
-		K8sNamespace:  envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
-		RealtimeURL:   os.Getenv("BF_REALTIME_URL"),
-		ValidatorURL:  os.Getenv("BF_VALIDATOR_URL"),
-		RabbitMqURL:   envOr("BF_RABBITMQ_URL", "amqp://bifrost:localdev@localhost:5672/"),
-		JWTSecret:     os.Getenv("BF_JWT_SECRET"),
+		Port:               envOr("BF_PORT", "8080"),
+		Env:                envOr("BF_ENV", "dev"),
+		DatabaseURL:        envOr("BF_DATABASE_URL", "postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable"),
+		GCPProject:         os.Getenv("BF_GCP_PROJECT"),
+		ARRepo:             os.Getenv("BF_AR_REPO"),
+		K8sInCluster:       os.Getenv("BF_K8S_IN_CLUSTER") == "true",
+		K8sKubeconfig:      envOr("BF_KUBECONFIG", defaultKubeconfig),
+		K8sNamespace:       envOr("BF_K8S_NAMESPACE", "bifrost-apps"),
+		RealtimeURL:        os.Getenv("BF_REALTIME_URL"),
+		ValidatorURL:       os.Getenv("BF_VALIDATOR_URL"),
+		RabbitMqURL:        envOr("BF_RABBITMQ_URL", "amqp://bifrost:localdev@localhost:5672/"),
+		JWTSecret:          os.Getenv("BF_JWT_SECRET"),
+		GoogleClientID:     os.Getenv("BF_GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: os.Getenv("BF_GOOGLE_CLIENT_SECRET"),
+		GitHubClientID:     os.Getenv("BF_GITHUB_CLIENT_ID"),
+		GitHubClientSecret: os.Getenv("BF_GITHUB_CLIENT_SECRET"),
+		AuthCallbackURL:    envOr("BF_AUTH_CALLBACK_URL", "http://localhost:8080"),
 	}
 }
 
