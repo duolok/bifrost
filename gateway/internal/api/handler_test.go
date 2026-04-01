@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,20 +12,93 @@ import (
 	"testing"
 
 	"duolok/bifrost/gateway/internal/api"
+	"duolok/bifrost/gateway/internal/auth"
 	"duolok/bifrost/gateway/internal/testutil"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var testJWTSecret = []byte("test-secret-key-for-testing-only")
 
 func TestMain(m *testing.M) {
 	m.Run()
 }
 
-func setupRouter(t *testing.T) http.Handler {
-	t.Helper()
-	pool := testutil.SetupTestDB(t)
-	return api.NewRouter(api.HandlerDeps{Pool: pool})
+type testEnv struct {
+	router http.Handler
+	pool   *pgxpool.Pool
+	token  string
+	teamID uuid.UUID
+	userID uuid.UUID
 }
 
-func doJSON(router http.Handler, method, path string, body any) *httptest.ResponseRecorder {
+func setupRouter(t *testing.T) *testEnv {
+	t.Helper()
+	pool := testutil.SetupTestDB(t)
+
+	// Create a test user and team
+	ctx := context.Background()
+	var teamID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`INSERT INTO teams (name) VALUES ('test-team') RETURNING id`,
+	).Scan(&teamID)
+	if err != nil {
+		t.Fatalf("failed to create test team: %v", err)
+	}
+
+	hash, _ := auth.HashPassword("testpassword")
+	var userID uuid.UUID
+	err = pool.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash, name) VALUES ('test@bifrost.dev', $1, 'Test User') RETURNING id`,
+		hash,
+	).Scan(&userID)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO team_members (team_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		teamID, userID,
+	)
+	if err != nil {
+		t.Fatalf("failed to add team member: %v", err)
+	}
+
+	token, err := auth.GenerateJWT(userID, teamID, "admin", testJWTSecret)
+	if err != nil {
+		t.Fatalf("failed to generate test JWT: %v", err)
+	}
+
+	router := api.NewRouter(api.HandlerDeps{
+		Pool:      pool,
+		JWTSecret: testJWTSecret,
+	}, testJWTSecret, pool)
+
+	return &testEnv{
+		router: router,
+		pool:   pool,
+		token:  token,
+		teamID: teamID,
+		userID: userID,
+	}
+}
+
+func doJSON(env *testEnv, method, path string, body any) *httptest.ResponseRecorder {
+	var buf bytes.Buffer
+	if body != nil {
+		json.NewEncoder(&buf).Encode(body)
+	}
+	req := httptest.NewRequest(method, path, &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.token)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	return w
+}
+
+// doJSONNoAuth makes a request without auth header (for public routes/webhook tests)
+func doJSONNoAuth(router http.Handler, method, path string, body any) *httptest.ResponseRecorder {
 	var buf bytes.Buffer
 	if body != nil {
 		json.NewEncoder(&buf).Encode(body)
@@ -52,9 +126,10 @@ func signPayload(secret string, body []byte) string {
 }
 
 func TestCheckHealth(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "GET", "/health", nil)
+	// Health is a public endpoint — no auth needed
+	w := doJSONNoAuth(env.router, "GET", "/health", nil)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -72,10 +147,19 @@ func TestCheckHealth(t *testing.T) {
 	}
 }
 
-func TestCreateProject(t *testing.T) {
-	router := setupRouter(t)
+func TestProtectedRouteRequiresAuth(t *testing.T) {
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w := doJSONNoAuth(env.router, "GET", "/api/v1/projects", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without auth, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateProject(t *testing.T) {
+	env := setupRouter(t)
+
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name":     "test-project",
 		"repo_url": "https://github.com/example/repo",
 	})
@@ -107,19 +191,19 @@ func TestCreateProject(t *testing.T) {
 }
 
 func TestCreateProjectDuplicate(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
 	payload := map[string]string{
 		"name":     "dup-project",
 		"repo_url": "https://github.com/example/dup",
 	}
 
-	w1 := doJSON(router, "POST", "/api/v1/project", payload)
+	w1 := doJSON(env, "POST", "/api/v1/project", payload)
 	if w1.Code != http.StatusCreated {
 		t.Fatalf("first create: expected 201, got %d", w1.Code)
 	}
 
-	w2 := doJSON(router, "POST", "/api/v1/project", payload)
+	w2 := doJSON(env, "POST", "/api/v1/project", payload)
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("duplicate create: expected 409, got %d: %s", w2.Code, w2.Body.String())
 	}
@@ -132,14 +216,14 @@ func TestCreateProjectDuplicate(t *testing.T) {
 }
 
 func TestCreateProjectValidation(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{})
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
-	w = doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w = doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name":     "bad-url",
 		"repo_url": "not-a-url",
 	})
@@ -150,9 +234,9 @@ func TestCreateProjectValidation(t *testing.T) {
 }
 
 func TestListProjects(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "GET", "/api/v1/projects", nil)
+	w := doJSON(env, "GET", "/api/v1/projects", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -163,15 +247,15 @@ func TestListProjects(t *testing.T) {
 		t.Errorf("expected empty list, got %d", len(projects))
 	}
 
-	doJSON(router, "POST", "/api/v1/project", map[string]string{
+	doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "proj-a", "repo_url": "https://github.com/example/a",
 	})
 
-	doJSON(router, "POST", "/api/v1/project", map[string]string{
+	doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "proj-b", "repo_url": "https://github.com/example/b",
 	})
 
-	w = doJSON(router, "GET", "/api/v1/projects", nil)
+	w = doJSON(env, "GET", "/api/v1/projects", nil)
 	body = parseJSON(t, w)
 	projects = body["projects"].([]any)
 	if len(projects) != 2 {
@@ -180,17 +264,17 @@ func TestListProjects(t *testing.T) {
 }
 
 func TestListProjectsExcludesArchived(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "to-archive", "repo_url": "https://github.com/example/archive",
 	})
 	body := parseJSON(t, w)
 	projectID := body["id"].(string)
 
-	doJSON(router, "DELETE", "/api/v1/project/"+projectID, nil)
+	doJSON(env, "DELETE", "/api/v1/project/"+projectID, nil)
 
-	w = doJSON(router, "GET", "/api/v1/projects", nil)
+	w = doJSON(env, "GET", "/api/v1/projects", nil)
 	body = parseJSON(t, w)
 	projects := body["projects"].([]any)
 	if len(projects) != 0 {
@@ -199,15 +283,15 @@ func TestListProjectsExcludesArchived(t *testing.T) {
 }
 
 func TestGetProject(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "get-me", "repo_url": "https://github.com/example/get",
 	})
 	created := parseJSON(t, w)
 	projectID := created["id"].(string)
 
-	w = doJSON(router, "GET", "/api/v1/project/"+projectID, nil)
+	w = doJSON(env, "GET", "/api/v1/project/"+projectID, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -223,54 +307,54 @@ func TestGetProject(t *testing.T) {
 }
 
 func TestGetProjectNotFound(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "GET", "/api/v1/project/00000000-0000-0000-0000-000000000000", nil)
+	w := doJSON(env, "GET", "/api/v1/project/00000000-0000-0000-0000-000000000000", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
 func TestGetProjectInvalidID(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "GET", "/api/v1/project/not-a-uuid", nil)
+	w := doJSON(env, "GET", "/api/v1/project/not-a-uuid", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
 func TestDeleteProject(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "delete-me", "repo_url": "https://github.com/example/del",
 	})
 	created := parseJSON(t, w)
 	projectID := created["id"].(string)
 
-	w = doJSON(router, "DELETE", "/api/v1/project/"+projectID, nil)
+	w = doJSON(env, "DELETE", "/api/v1/project/"+projectID, nil)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Should still be visible via GET but status=archived
-	w = doJSON(router, "GET", "/api/v1/project/"+projectID, nil)
+	w = doJSON(env, "GET", "/api/v1/project/"+projectID, nil)
 	body := parseJSON(t, w)
 	if body["status"] != "archived" {
 		t.Errorf("expected status archived, got %v", body["status"])
 	}
 
 	// Double delete should 404
-	w = doJSON(router, "DELETE", "/api/v1/project/"+projectID, nil)
+	w = doJSON(env, "DELETE", "/api/v1/project/"+projectID, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("double delete: expected 404, got %d", w.Code)
 	}
 }
 
-func createTestProject(t *testing.T, router http.Handler) (projectID, webhookSecret string) {
+func createTestProject(t *testing.T, env *testEnv) (projectID, webhookSecret string) {
 	t.Helper()
-	w := doJSON(router, "POST", "/api/v1/project", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/project", map[string]string{
 		"name": "deploy-test-" + t.Name(), "repo_url": "https://github.com/example/" + t.Name(),
 	})
 	if w.Code != http.StatusCreated {
@@ -281,10 +365,10 @@ func createTestProject(t *testing.T, router http.Handler) (projectID, webhookSec
 }
 
 func TestTriggerDeploy(t *testing.T) {
-	router := setupRouter(t)
-	projectID, _ := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, _ := createTestProject(t, env)
 
-	w := doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
 		"commit_sha": "abc1234",
 		"branch":     "main",
 	})
@@ -306,25 +390,25 @@ func TestTriggerDeploy(t *testing.T) {
 }
 
 func TestTriggerDeployDuplicate(t *testing.T) {
-	router := setupRouter(t)
-	projectID, _ := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, _ := createTestProject(t, env)
 
 	payload := map[string]string{"commit_sha": "dup12345", "branch": "main"}
-	w1 := doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", payload)
+	w1 := doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", payload)
 	if w1.Code != http.StatusCreated {
 		t.Fatalf("first deploy: expected 201, got %d", w1.Code)
 	}
 
-	w2 := doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", payload)
+	w2 := doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", payload)
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("duplicate deploy: expected 409, got %d: %s", w2.Code, w2.Body.String())
 	}
 }
 
 func TestTriggerDeployProjectNotFound(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "POST", "/api/v1/projects/00000000-0000-0000-0000-000000000000/deploy", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/projects/00000000-0000-0000-0000-000000000000/deploy", map[string]string{
 		"commit_sha": "abc1234",
 	})
 	if w.Code != http.StatusNotFound {
@@ -333,12 +417,12 @@ func TestTriggerDeployProjectNotFound(t *testing.T) {
 }
 
 func TestTriggerDeployArchivedProject(t *testing.T) {
-	router := setupRouter(t)
-	projectID, _ := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, _ := createTestProject(t, env)
 
-	doJSON(router, "DELETE", "/api/v1/project/"+projectID, nil)
+	doJSON(env, "DELETE", "/api/v1/project/"+projectID, nil)
 
-	w := doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
 		"commit_sha": "abc1234",
 	})
 	if w.Code != http.StatusNotFound {
@@ -347,11 +431,11 @@ func TestTriggerDeployArchivedProject(t *testing.T) {
 }
 
 func TestListDeployments(t *testing.T) {
-	router := setupRouter(t)
-	projectID, _ := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, _ := createTestProject(t, env)
 
 	// Empty list
-	w := doJSON(router, "GET", "/api/v1/projects/"+projectID+"/deployments", nil)
+	w := doJSON(env, "GET", "/api/v1/projects/"+projectID+"/deployments", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -362,14 +446,14 @@ func TestListDeployments(t *testing.T) {
 	}
 
 	// Create two deployments
-	doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
+	doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
 		"commit_sha": "aaa1111", "branch": "main",
 	})
-	doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
+	doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
 		"commit_sha": "bbb2222", "branch": "feat/x",
 	})
 
-	w = doJSON(router, "GET", "/api/v1/projects/"+projectID+"/deployments", nil)
+	w = doJSON(env, "GET", "/api/v1/projects/"+projectID+"/deployments", nil)
 	body = parseJSON(t, w)
 	deployments = body["deployments"].([]any)
 	if len(deployments) != 2 {
@@ -378,16 +462,16 @@ func TestListDeployments(t *testing.T) {
 }
 
 func TestGetDeployment(t *testing.T) {
-	router := setupRouter(t)
-	projectID, _ := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, _ := createTestProject(t, env)
 
-	w := doJSON(router, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
+	w := doJSON(env, "POST", "/api/v1/projects/"+projectID+"/deploy", map[string]string{
 		"commit_sha": "get12345", "branch": "main",
 	})
 	created := parseJSON(t, w)
 	deployID := created["id"].(string)
 
-	w = doJSON(router, "GET", "/api/v1/deployments/"+deployID, nil)
+	w = doJSON(env, "GET", "/api/v1/deployments/"+deployID, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -399,17 +483,86 @@ func TestGetDeployment(t *testing.T) {
 }
 
 func TestGetDeploymentNotFound(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
-	w := doJSON(router, "GET", "/api/v1/deployments/00000000-0000-0000-0000-000000000000", nil)
+	w := doJSON(env, "GET", "/api/v1/deployments/00000000-0000-0000-0000-000000000000", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
+func TestRegisterAndLogin(t *testing.T) {
+	env := setupRouter(t)
+
+	// Register
+	w := doJSONNoAuth(env.router, "POST", "/api/v1/auth/register", map[string]string{
+		"email":    "new@bifrost.dev",
+		"password": "securepass123",
+		"name":     "New User",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	body := parseJSON(t, w)
+	if body["token"] == nil || body["token"] == "" {
+		t.Error("expected token in register response")
+	}
+	if body["role"] != "admin" {
+		t.Errorf("expected role admin, got %v", body["role"])
+	}
+
+	// Login
+	w = doJSONNoAuth(env.router, "POST", "/api/v1/auth/login", map[string]string{
+		"email":    "new@bifrost.dev",
+		"password": "securepass123",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body = parseJSON(t, w)
+	if body["token"] == nil || body["token"] == "" {
+		t.Error("expected token in login response")
+	}
+
+	// Wrong password
+	w = doJSONNoAuth(env.router, "POST", "/api/v1/auth/login", map[string]string{
+		"email":    "new@bifrost.dev",
+		"password": "wrongpassword",
+	})
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password: expected 401, got %d", w.Code)
+	}
+}
+
+func TestRBACViewerCannotDeploy(t *testing.T) {
+	env := setupRouter(t)
+
+	// Create a viewer-scoped token
+	viewerToken, _ := auth.GenerateJWT(env.userID, env.teamID, "viewer", testJWTSecret)
+
+	// Create project with admin token first
+	projectID, _ := createTestProject(t, env)
+
+	// Try to deploy with viewer token
+	var buf bytes.Buffer
+	json.NewEncoder(&buf).Encode(map[string]string{
+		"commit_sha": "abc1234",
+		"branch":     "main",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/projects/"+projectID+"/deploy", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+viewerToken)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("viewer deploy: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestGitHubWebhook(t *testing.T) {
-	router := setupRouter(t)
-	projectID, secret := createTestProject(t, router)
+	env := setupRouter(t)
+	projectID, secret := createTestProject(t, env)
 	_ = projectID
 
 	// Get the repo_url we used
@@ -433,7 +586,7 @@ func TestGitHubWebhook(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", sig)
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	env.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -449,8 +602,8 @@ func TestGitHubWebhook(t *testing.T) {
 }
 
 func TestGitHubWebhookInvalidSignature(t *testing.T) {
-	router := setupRouter(t)
-	createTestProject(t, router)
+	env := setupRouter(t)
+	createTestProject(t, env)
 
 	repoURL := "https://github.com/example/" + t.Name()
 
@@ -468,7 +621,7 @@ func TestGitHubWebhookInvalidSignature(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", "sha256=0000000000000000000000000000000000000000000000000000000000000000")
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	env.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
@@ -476,8 +629,8 @@ func TestGitHubWebhookInvalidSignature(t *testing.T) {
 }
 
 func TestGitHubWebhookDuplicate(t *testing.T) {
-	router := setupRouter(t)
-	_, secret := createTestProject(t, router)
+	env := setupRouter(t)
+	_, secret := createTestProject(t, env)
 
 	repoURL := "https://github.com/example/" + t.Name()
 
@@ -497,7 +650,7 @@ func TestGitHubWebhookDuplicate(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Hub-Signature-256", sig)
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		env.router.ServeHTTP(w, req)
 		return w
 	}
 
@@ -517,7 +670,7 @@ func TestGitHubWebhookDuplicate(t *testing.T) {
 }
 
 func TestGitHubWebhookUnknownRepo(t *testing.T) {
-	router := setupRouter(t)
+	env := setupRouter(t)
 
 	payload := map[string]any{
 		"ref":   "refs/heads/main",
@@ -533,7 +686,7 @@ func TestGitHubWebhookUnknownRepo(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", "sha256=fake")
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	env.router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
