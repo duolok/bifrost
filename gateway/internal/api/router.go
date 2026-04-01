@@ -19,6 +19,11 @@ func NewRouter(deps HandlerDeps, jwtSecret []byte, pool *pgxpool.Pool) *gin.Engi
 	{
 		authGroup.POST("/register", h.Register)
 		authGroup.POST("/login", h.Login)
+
+		authGroup.GET("/google", h.GoogleRedirect)
+		authGroup.GET("/google/callback", h.GoogleCallback)
+		authGroup.GET("/github", h.GitHubRedirect)
+		authGroup.GET("/github/callback", h.GitHubCallback)
 	}
 
 	r.POST("/api/v1/webhook/github", h.HandleGitHubWebhook)
