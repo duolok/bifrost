@@ -65,11 +65,59 @@ CREATE TABLE audit_log (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE project_secrets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    key_name TEXT NOT NULL,
+    secret_ref TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(project_id, key_name)
+);
+
+CREATE TABLE teams (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE users (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email         VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    name          VARCHAR(255),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE team_members (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    team_id    UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       VARCHAR(20) NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, user_id)
+);
+
+CREATE TABLE api_keys (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_id    UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    key_hash   VARCHAR(255) NOT NULL UNIQUE,
+    name       VARCHAR(255) NOT NULL,
+    scopes     TEXT[] DEFAULT '{}',
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id);
+
 CREATE INDEX idx_deployments_project_id ON deployments(project_id);
 CREATE INDEX idx_deployments_status ON deployments(status);
 CREATE INDEX idx_health_checks_deployment_id ON health_checks(deployment_id);
 CREATE INDEX idx_audit_log_resource ON audit_log(resource_type, resource_id);
 CREATE INDEX idx_projects_repo_url ON projects(repo_url);
+CREATE INDEX idx_projects_team ON projects(team_id);
 `
 
 // SetupTestDB starts a Postgres container and returns a connected pool.
