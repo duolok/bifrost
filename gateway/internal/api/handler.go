@@ -7,6 +7,7 @@ import (
 
 	"duolok/bifrost/gateway/internal/events"
 	"duolok/bifrost/gateway/internal/k8s"
+	"duolok/bifrost/gateway/internal/middleware"
 	"duolok/bifrost/gateway/internal/models"
 	"duolok/bifrost/gateway/internal/notify"
 	"duolok/bifrost/gateway/internal/pubsub"
@@ -26,6 +27,7 @@ type Handler struct {
 	emitter   *events.Emitter
 	notifier  *notify.Publisher
 	rules     *rules.Engine
+	jwtSecret []byte
 	startAt   time.Time
 }
 
@@ -37,6 +39,7 @@ type HandlerDeps struct {
 	Emitter   *events.Emitter
 	Notifier  *notify.Publisher
 	Rules     *rules.Engine
+	JWTSecret []byte
 }
 
 func NewHandler(deps HandlerDeps) *Handler {
@@ -48,11 +51,11 @@ func NewHandler(deps HandlerDeps) *Handler {
 		emitter:   deps.Emitter,
 		notifier:  deps.Notifier,
 		rules:     deps.Rules,
+		jwtSecret: deps.JWTSecret,
 		startAt:   time.Now(),
 	}
 }
 
-// Shared deployment SELECT columns used across handlers.
 const deploymentSelectSQL = `SELECT id, project_id, commit_sha, branch, triggered_by, image_uri,
 			status, status_message, config_snapshot,
 			build_started_at, build_finished_at, deploy_started_at, deploy_finished_at, created_at
@@ -67,11 +70,15 @@ func (h *Handler) fetchDeployment(ctx context.Context, id uuid.UUID) (models.Dep
 
 // audit function is used for managing audit logs.
 func (h *Handler) audit(c *gin.Context, action, resourceType string, resourceID uuid.UUID, details gin.H) {
+	actor := middleware.GetUserID(c)
+	if actor == "" {
+		actor = "system"
+	}
 	go func() {
 		_, err := h.pool.Exec(context.Background(),
 			`INSERT INTO audit_log (actor, action, resource_type, resource_id, details)
 			 VALUES ($1, $2, $3, $4, $5)`,
-			"system", action, resourceType, resourceID, details,
+			actor, action, resourceType, resourceID, details,
 		)
 		if err != nil {
 			slog.Error("failed to write audit log", "action", action, "error", err)
