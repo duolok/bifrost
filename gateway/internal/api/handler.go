@@ -28,6 +28,7 @@ type Handler struct {
 	notifier  *notify.Publisher
 	rules     *rules.Engine
 	jwtSecret []byte
+	oauth     *OAuthConfig
 	startAt   time.Time
 }
 
@@ -40,6 +41,7 @@ type HandlerDeps struct {
 	Notifier  *notify.Publisher
 	Rules     *rules.Engine
 	JWTSecret []byte
+	OAuth     *OAuthConfig
 }
 
 func NewHandler(deps HandlerDeps) *Handler {
@@ -52,6 +54,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		notifier:  deps.Notifier,
 		rules:     deps.Rules,
 		jwtSecret: deps.JWTSecret,
+		oauth:     deps.OAuth,
 		startAt:   time.Now(),
 	}
 }
