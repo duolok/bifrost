@@ -20,6 +20,7 @@ import (
 	"duolok/bifrost/gateway/internal/notify"
 	"duolok/bifrost/gateway/internal/pubsub"
 	"duolok/bifrost/gateway/internal/rules"
+	"duolok/bifrost/gateway/internal/telemetry"
 	"duolok/bifrost/gateway/internal/validator"
 )
 
@@ -33,6 +34,9 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	shutdownTracer := telemetry.Init(ctx, "bifrost-gateway")
+	defer shutdownTracer()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
