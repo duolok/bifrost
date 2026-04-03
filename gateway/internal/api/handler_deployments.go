@@ -72,7 +72,7 @@ func (h *Handler) TriggerDeploy(c *gin.Context) {
 
 	projectName, repoURL := h.fetchProjectMeta(c.Request.Context(), projectID)
 	h.validateAndBuild(c, d.ID, projectName, repoURL, req.CommitSHA)
-	h.emitter.Emit("deploy.created", d.ID.String(), projectName, "Deployment queued")
+	h.emitter.Emit(c.Request.Context(), "deploy.created", d.ID.String(), projectName, "Deployment queued")
 
 	c.JSON(http.StatusCreated, d)
 }
@@ -223,7 +223,7 @@ func (h *Handler) RetryDeploy(c *gin.Context) {
 
 	projectName, repoURL := h.fetchProjectMeta(ctx, d.ProjectID)
 	h.validateAndBuild(c, id, projectName, repoURL, d.CommitSHA)
-	h.emitter.Emit("deploy.retried", id.String(), projectName, "Deployment retried")
+	h.emitter.Emit(ctx, "deploy.retried", id.String(), projectName, "Deployment retried")
 
 	d, _ = h.fetchDeployment(ctx, id)
 	c.JSON(http.StatusOK, d)
@@ -297,7 +297,7 @@ func (h *Handler) Rollback(c *gin.Context) {
 		"rollback_commit": prev.CommitSHA,
 	})
 
-	h.emitter.Emit("deploy.rollback", d.ID.String(), p.Name, "Rolling back to "+prev.CommitSHA[:8])
+	h.emitter.Emit(ctx, "deploy.rollback", d.ID.String(), p.Name, "Rolling back to "+prev.CommitSHA[:8])
 
 	// Deploy using the existing image
 	if err := h.deployer.Deploy(ctx, d, p); err != nil {
@@ -329,7 +329,7 @@ func (h *Handler) validateAndBuild(c *gin.Context, deployID uuid.UUID, projectNa
 }
 
 func (h *Handler) runValidation(ctx context.Context, deployID uuid.UUID, projectName, repoURL, commitSHA string) {
-	h.emitter.Emit("deploy.validating", deployID.String(), projectName, "Validating config")
+	h.emitter.Emit(ctx, "deploy.validating", deployID.String(), projectName, "Validating config")
 
 	_, err := h.pool.Exec(ctx,
 		`UPDATE deployments SET status = $1 WHERE id = $2 AND status = $3`,
@@ -374,7 +374,7 @@ func (h *Handler) runValidation(ctx context.Context, deployID uuid.UUID, project
 		configJSON, deployID,
 	)
 
-	h.emitter.Emit("deploy.validated", deployID.String(), projectName, "Config validation passed")
+	h.emitter.Emit(ctx, "deploy.validated", deployID.String(), projectName, "Config validation passed")
 	slog.Info("config validation passed", "deploy_id", deployID, "project", projectName)
 }
 
@@ -384,7 +384,7 @@ func (h *Handler) failDeploy(ctx context.Context, deployID uuid.UUID, message st
 		models.StatusFailed, message, deployID,
 	)
 
-	h.emitter.Emit("deploy.failed", deployID.String(), "", message)
+	h.emitter.Emit(ctx, "deploy.failed", deployID.String(), "", message)
 
 	if err != nil {
 		slog.Error("failed to mark deployment as failed", "deploy_id", deployID, "error", err)
@@ -406,7 +406,7 @@ func (h *Handler) publishBuild(ctx context.Context, deployID uuid.UUID, projectN
 		return
 	}
 
-	h.emitter.Emit("deploy.building", deployID.String(), projectName, "Build started")
+	h.emitter.Emit(ctx, "deploy.building", deployID.String(), projectName, "Build started")
 
 	req := pubsub.BuildRequest{
 		DeployID:    deployID.String(),
