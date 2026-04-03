@@ -13,6 +13,8 @@ import (
 	gcppubsub "cloud.google.com/go/pubsub"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type BuildComplete struct {
@@ -46,6 +48,11 @@ func NewSubscriber(ctx context.Context, pool *pgxpool.Pool, deployer *k8s.Deploy
 func (s *Subscriber) Start(ctx context.Context) error {
 	slog.Info("build-complete subscriber started")
 	return s.sub.Receive(ctx, func(ctx context.Context, msg *gcppubsub.Message) {
+		// Extract trace context from message attributes
+		if msg.Attributes != nil {
+			ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(msg.Attributes))
+		}
+
 		var bc BuildComplete
 		if err := json.Unmarshal(msg.Data, &bc); err != nil {
 			slog.Error("failed to parse build-complete message", "error", err, "data", string(msg.Data))
@@ -77,7 +84,7 @@ func (s *Subscriber) handleBuildComplete(ctx context.Context, bc BuildComplete) 
 			 WHERE id = $3 AND status = $4`,
 			models.StatusFailed, bc.ErrorMessage, deployID, models.StatusBuilding,
 		)
-		s.emitter.Emit("deploy.build_failed", bc.DeployID, "", bc.ErrorMessage)
+		s.emitter.Emit(ctx, "deploy.build_failed", bc.DeployID, "", bc.ErrorMessage)
 		return err
 	}
 
@@ -95,7 +102,7 @@ func (s *Subscriber) handleBuildComplete(ctx context.Context, bc BuildComplete) 
 		return fmt.Errorf("deployment %s not in building state", deployID)
 	}
 
-	s.emitter.Emit("deploy.built", bc.DeployID, "", "Build complete")
+	s.emitter.Emit(ctx, "deploy.built", bc.DeployID, "", "Build complete")
 
 	if s.deployer == nil {
 		slog.Warn("k8s deployer not configured, stopping at built", "deploy_id", deployID)

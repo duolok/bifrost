@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	gcppubsub "cloud.google.com/go/pubsub"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 type BuildRequest struct {
@@ -41,7 +43,10 @@ func (p *Publisher) PublishBuildRequest(ctx context.Context, req BuildRequest) e
 		return fmt.Errorf("marshal build request: %w", err)
 	}
 
-	result := p.topic.Publish(ctx, &gcppubsub.Message{Data: data})
+	attrs := make(map[string]string)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.MapCarrier(attrs))
+
+	result := p.topic.Publish(ctx, &gcppubsub.Message{Data: data, Attributes: attrs})
 	if _, err := result.Get(ctx); err != nil {
 		return fmt.Errorf("publish build request: %w", err)
 	}
