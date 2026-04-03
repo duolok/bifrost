@@ -7,6 +7,8 @@ defmodule Realtime.Application do
 
   @impl true
   def start(_type, _args) do
+    Realtime.OtelSetup.setup()
+
     children = [
       RealtimeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:realtime, :dns_cluster_query) || :ignore},
