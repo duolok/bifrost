@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from src import db
 from src.config import settings
 from src.metrics import analyze_health, compute_dora, compute_per_project
+from src import telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +31,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+telemetry.init(app)
 
 
 @app.get("/health")
