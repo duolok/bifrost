@@ -81,7 +81,7 @@ func (h *Handler) ReportHealth(c *gin.Context) {
 		actions := h.rules.Evaluate(event, defaultRulesScript)
 		for _, action := range actions {
 			if action.Type == "notify" && h.notifier != nil {
-				h.notifier.PublishEmail(notify.EmailMessage{
+				h.notifier.PublishEmail(c.Request.Context(), notify.EmailMessage{
 					To:       action.To,
 					Subject:  "[Bifrost] " + action.Severity + ": " + projectName,
 					Body:     action.Message,
