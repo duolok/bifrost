@@ -53,6 +53,9 @@ pub async fn run(cfg: Config) -> Result<()> {
 
         let data = msg.data.as_ref();
 
+        // Extract traceparent from message attributes for log correlation
+        let traceparent = msg.attributes.get("traceparent").cloned();
+
         // Parse the build request
         let req: BuildRequest = match serde_json::from_slice(data) {
             Ok(r) => r,
@@ -74,7 +77,11 @@ pub async fn run(cfg: Config) -> Result<()> {
 
         match serde_json::to_vec(&result) {
             Ok(payload) => {
-                let pubsub_msg = Message::new().set_data(payload);
+                let mut pubsub_msg = Message::new().set_data(payload);
+                // Forward traceparent to build-complete message
+                if let Some(ref tp) = traceparent {
+                    pubsub_msg = pubsub_msg.set_attributes([("traceparent", tp.as_str())]);
+                }
                 if let Err(e) = publisher.publish(pubsub_msg).await {
                     tracing::error!(deploy_id = %result.deploy_id, error = %e, "failed to publish build-complete");
                     continue;
