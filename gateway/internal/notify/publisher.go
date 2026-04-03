@@ -1,12 +1,15 @@
 package notify
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const (
@@ -77,7 +80,7 @@ func (p *Publisher) Close() error {
 	return nil
 }
 
-func (p *Publisher) PublishEmail(msg EmailMessage) {
+func (p *Publisher) PublishEmail(ctx context.Context, msg EmailMessage) {
 	if p == nil {
 		return
 	}
@@ -90,10 +93,18 @@ func (p *Publisher) PublishEmail(msg EmailMessage) {
 		return
 	}
 
+	headers := amqp.Table{}
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	for k, v := range carrier {
+		headers[k] = v
+	}
+
 	err = p.ch.Publish(exchangeName, routingKey, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
+		Headers:      headers,
 	})
 	if err != nil {
 		slog.Warn("failed to publish email", "to", msg.To, "error", err)
