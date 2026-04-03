@@ -5,16 +5,13 @@ mod job;
 mod message;
 mod pubsub;
 mod realtime;
+mod telemetry;
 
 use anyhow::Result;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .json()
-        .init();
+    telemetry::init()?;
 
     let cfg = config::Config::from_env()?;
     tracing::info!(
@@ -23,5 +20,7 @@ async fn main() -> Result<()> {
         "builder starting"
     );
 
-    pubsub::run(cfg).await
+    let result = pubsub::run(cfg).await;
+    telemetry::shutdown();
+    result
 }
