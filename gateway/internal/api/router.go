@@ -5,11 +5,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func NewRouter(deps HandlerDeps, jwtSecret []byte, pool *pgxpool.Pool) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(otelgin.Middleware("bifrost-gateway"))
 	r.Use(middleware.RequestLogger())
 
 	h := NewHandler(deps)
