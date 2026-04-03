@@ -95,13 +95,13 @@ func (d *Deployer) Deploy(ctx context.Context, deployment models.Deployment, pro
 	if err := d.transitionStatus(ctx, deployment.ID, deployment.Status, models.StatusDeploying, "Applying K8s manifests"); err != nil {
 		return err
 	}
-	d.emitter.Emit("deploy.deploying", deployment.ID.String(), project.Name, "Applying K8s manifests")
+	d.emitter.Emit(ctx, "deploy.deploying", deployment.ID.String(), project.Name, "Applying K8s manifests")
 
 	// Generate and apply manifests
 	if err := d.applyManifests(ctx, project, deployment); err != nil {
 		msg := fmt.Sprintf("deploy failed: %v", err)
 		_ = d.transitionStatus(ctx, deployment.ID, models.StatusDeploying, models.StatusFailed, msg)
-		d.emitter.Emit("deploy.deploy_failed", deployment.ID.String(), project.Name, msg)
+		d.emitter.Emit(ctx, "deploy.deploy_failed", deployment.ID.String(), project.Name, msg)
 		return err
 	}
 
@@ -109,7 +109,7 @@ func (d *Deployer) Deploy(ctx context.Context, deployment models.Deployment, pro
 	if err := d.transitionStatus(ctx, deployment.ID, models.StatusDeploying, models.StatusRunning, "Manifests applied"); err != nil {
 		return err
 	}
-	d.emitter.Emit("deploy.running", deployment.ID.String(), project.Name, "Deployment live")
+	d.emitter.Emit(ctx, "deploy.running", deployment.ID.String(), project.Name, "Deployment live")
 
 	slog.Info("deployment applied to k8s",
 		"deployment_id", deployment.ID,
