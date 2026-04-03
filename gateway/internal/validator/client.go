@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type ValidationError struct {
@@ -32,7 +34,8 @@ func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   10 * time.Second,
 		},
 	}
 }
@@ -83,7 +86,10 @@ func FetchDeployToml(ctx context.Context, repoURL, commitSHA string) (string, er
 		return "", fmt.Errorf("creating request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   15 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetching deploy.toml: %w", err)
