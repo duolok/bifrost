@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -17,7 +18,9 @@ type Emitter struct {
 
 func NewEmitter(addr string) (*Emitter, error) {
 	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 
 	if err != nil {
 		return nil, err
@@ -33,13 +36,13 @@ func (e *Emitter) Close() error {
 	return e.conn.Close()
 }
 
-func (e *Emitter) Emit(eventType, deployID, projectName, message string) {
+func (e *Emitter) Emit(ctx context.Context, eventType, deployID, projectName, message string) {
 	if e == nil {
 		return
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
 		_, err := e.client.SendEvent(ctx, &pb.PlatformEvent{
