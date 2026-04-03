@@ -28,6 +28,20 @@ pub fn send(allocator: std.mem.Allocator, host: []const u8, port: u16, deploy_id
     };
 }
 
+fn generateTraceparent() [55]u8 {
+    var trace_id: [16]u8 = undefined;
+    var span_id: [8]u8 = undefined;
+    std.crypto.random.bytes(&trace_id);
+    std.crypto.random.bytes(&span_id);
+
+    var buf: [55]u8 = undefined;
+    _ = std.fmt.bufPrint(&buf, "00-{s}-{s}-01", .{
+        std.fmt.fmtSliceHexLower(&trace_id),
+        std.fmt.fmtSliceHexLower(&span_id),
+    }) catch unreachable;
+    return buf;
+}
+
 fn doSend(allocator: std.mem.Allocator, host: []const u8, port: u16, deploy_id: []const u8, report: HealthReport) !void {
     var body_buf: [512]u8 = undefined;
     const body = try std.fmt.bufPrint(&body_buf,
@@ -41,10 +55,12 @@ fn doSend(allocator: std.mem.Allocator, host: []const u8, port: u16, deploy_id: 
         report.open_fds,
     });
 
-    var req_buf: [1024]u8 = undefined;
+    const traceparent = generateTraceparent();
+
+    var req_buf: [1280]u8 = undefined;
     const req = try std.fmt.bufPrint(&req_buf,
-        "POST /api/v1/deployments/{s}/health HTTP/1.1\r\nHost: {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
-        .{ deploy_id, host, body.len, body },
+        "POST /api/v1/deployments/{s}/health HTTP/1.1\r\nHost: {s}\r\nContent-Type: application/json\r\nTraceparent: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+        .{ deploy_id, host, &traceparent, body.len, body },
     );
 
     const stream = try std.net.tcpConnectToHost(allocator, host, port);
