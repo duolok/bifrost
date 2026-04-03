@@ -6,16 +6,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
-		traceID := c.GetHeader("X-Trace-ID")
+		// Prefer OTel trace ID if a span exists, otherwise fall back to UUID
+		traceID := ""
+		span := trace.SpanFromContext(c.Request.Context())
+		if span.SpanContext().HasTraceID() {
+			traceID = span.SpanContext().TraceID().String()
+		}
+
+		if traceID == "" {
+			traceID = c.GetHeader("X-Trace-ID")
+		}
+
 		if traceID == "" {
 			traceID = uuid.New().String()
 		}
+
 		c.Set("trace_id", traceID)
 		c.Header("X-Trace-ID", traceID)
 
