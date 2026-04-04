@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: Bifrost
+    orgId: 1
+    folder: Bifrost
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
