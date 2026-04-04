@@ -2,7 +2,7 @@ defmodule Realtime.GRPC.EventIngress do
   use GRPC.Server, service: Bifrost.Events.EventIngress.Service
   require OpenTelemetry.Tracer, as: Tracer
 
-  alias Bifrost.Events.{PlatformEvent, BuildLogLine, Ack}
+  alias Bifrost.Events.{PlatformEvent, Ack}
   alias Realtime.EventDispatcher
 
   def send_event(%PlatformEvent{} = event, stream) do
