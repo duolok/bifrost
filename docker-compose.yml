@@ -56,7 +56,7 @@ services:
       - "8085:8085"
 
   tempo:
-    image: grafana/tempo:2.6
+    image: grafana/tempo:2.7.2
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
       - ./ops/tempo.yaml:/etc/tempo.yaml
@@ -65,12 +65,14 @@ services:
       - "3200:3200"
 
   grafana:
-    image: grafana/grafana:11.0
+    image: grafana/grafana:11.6.0
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
     volumes:
       - ./ops/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/ds.yaml
+      - ./ops/grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./ops/dashboards:/var/lib/grafana/dashboards
     ports:
       - "3000:3000"
     depends_on:
