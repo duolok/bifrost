@@ -1,6 +1,7 @@
 package api
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net/http"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (h *Handler) Register(c *gin.Context) {
@@ -43,7 +45,12 @@ func (h *Handler) Register(c *gin.Context) {
 		req.Email, hash, req.Name,
 	).Scan(&userID)
 	if err != nil {
-		apiutil.RespondError(c, appErrors.AlreadyExists("user", req.Email))
+		var pgErr *pgconn.PgError
+		if stderrors.As(err, &pgErr) && pgErr.Code == "23505" {
+			apiutil.RespondError(c, appErrors.AlreadyExists("user", req.Email))
+		} else {
+			apiutil.RespondError(c, appErrors.Internal("failed to create user", err))
+		}
 		return
 	}
 
