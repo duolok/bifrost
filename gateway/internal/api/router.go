@@ -11,6 +11,7 @@ import (
 func NewRouter(deps HandlerDeps, jwtSecret []byte, pool *pgxpool.Pool) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.CORS())
 	r.Use(otelgin.Middleware("bifrost-gateway"))
 	r.Use(middleware.RequestLogger())
 
