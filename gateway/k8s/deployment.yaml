@@ -40,11 +40,50 @@ spec:
             - name: BF_K8S_NAMESPACE
               value: "bifrost-apps"
             - name: BF_VALIDATOR_URL
-              value: "https://bifrost-validator-274528789467.europe-central2.run.app"
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: validator_url
             - name: BF_REALTIME_URL
-              value: "bifrost-realtime:50051"
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: realtime_url
             - name: BF_RABBITMQ_URL
-              value: "amqp://bifrost:localdev@bifrost-rabbitmq:5672/"
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: rabbitmq_url
+            - name: BF_AUTH_CALLBACK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: auth_callback_url
+            - name: BF_GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-oauth
+                  key: google-client-id
+            - name: BF_GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-oauth
+                  key: google-client-secret
+            - name: BF_GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-oauth
+                  key: github-client-id
+            - name: BF_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-oauth
+                  key: github-client-secret
+            - name: BF_UI_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: ui_url
           resources:
             requests:
               cpu: "250m"
