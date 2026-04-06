@@ -131,6 +131,7 @@ func main() {
 		GitHubClientID:     cfg.GitHubClientID,
 		GitHubClientSecret: cfg.GitHubClientSecret,
 		CallbackBaseURL:    cfg.AuthCallbackURL,
+		UIBaseURL:          cfg.UIBaseURL,
 	}
 
 	if oauthCfg.GoogleEnabled() {
@@ -200,6 +201,7 @@ type GatewayConfig struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 	AuthCallbackURL    string
+	UIBaseURL          string
 }
 
 func loadConfig() GatewayConfig {
@@ -224,6 +226,7 @@ func loadConfig() GatewayConfig {
 		GitHubClientID:     os.Getenv("BF_GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("BF_GITHUB_CLIENT_SECRET"),
 		AuthCallbackURL:    envOr("BF_AUTH_CALLBACK_URL", "http://localhost:8080"),
+		UIBaseURL:          os.Getenv("BF_UI_URL"),
 	}
 }
 
