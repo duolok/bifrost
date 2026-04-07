@@ -4,7 +4,8 @@
        realtime-run \
        healthcheck-build healthcheck-run \
        analytics-run \
-       email-run
+       email-run \
+       ui-dev ui-build ui-preview ui-deploy
 
 dev:
 	docker compose up -d
@@ -72,8 +73,10 @@ REALTIME_IMG       := $(REGISTRY)/realtime:latest
 HEALTHCHECK_IMG    := $(REGISTRY)/healthcheck:latest
 EMAIL_IMG          := $(REGISTRY)/email:latest
 ANALYTICS_IMG      := $(REGISTRY)/analytics:latest
+UI_IMG           := $(REGISTRY)/ui:latest
 VALIDATOR_URL   = $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null)
-GATEWAY_URL   = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+GATEWAY_URL     = $(shell kubectl get svc bifrost-gateway -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+ANALYTICS_URL   = $(shell kubectl get svc bifrost-analytics -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
 # Spin up everything from scratch: infra → migrate → build → deploy
 cloud-up:
@@ -102,6 +105,8 @@ cloud-down:
 	kubectl delete -f gateway/k8s/rbac.yaml 2>/dev/null || true
 	kubectl delete -f gateway/k8s/sa.yaml 2>/dev/null || true
 	kubectl delete -f builder/k8s/sa.yaml 2>/dev/null || true
+	kubectl delete -f ui/k8s/service.yaml 2>/dev/null || true
+	kubectl delete -f ui/k8s/deployment.yaml 2>/dev/null || true
 	@echo "==> Destroying all Terraform resources..."
 	cd infra && terraform destroy -auto-approve -var="project_id=$(GCP_PROJECT)" -var="db_password=BfrostPg2026x"
 	@echo "==> Done. All cloud resources destroyed."
@@ -116,6 +121,10 @@ cloud-status:
 	@echo "=== Cloud SQL ==="
 	@gcloud sql instances describe bifrost-db --format='table(state,ipAddresses[0].ipAddress)' 2>/dev/null || echo "Not running"
 	@echo ""
+	@echo ""
+	@echo "=== Cloud Run (UI + Validator) ==="
+	@gcloud run services list --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='table(service,status.url,status.conditions[0].status)' 2>/dev/null || echo "Not available"
+	@echo ""
 	@echo "=== Health Check ==="
 	@curl -s http://$(GATEWAY_URL)/health 2>/dev/null | jq . || echo "Gateway not reachable"
 
@@ -124,19 +133,16 @@ cloud-deploy:
 	@echo "==> Getting kubectl credentials..."
 	gcloud container clusters get-credentials bifrost-cluster --region $(GCP_REGION) --project $(GCP_PROJECT)
 	kubectl create namespace bifrost-apps 2>/dev/null || true
-	@echo "==> Creating ConfigMap with DB IP..."
-	kubectl create configmap bifrost-config -n bifrost-apps \
-		--from-literal=database_url="host=$$(terraform -chdir=infra output -raw db_ip) user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable" \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "==> Building and pushing gateway..."
+	@echo "==> Reserving static IPs (idempotent)..."
+	gcloud compute addresses create bifrost-gateway-ip --region $(GCP_REGION) --project $(GCP_PROJECT) 2>/dev/null || true
+	gcloud compute addresses create bifrost-ui-ip --region $(GCP_REGION) --project $(GCP_PROJECT) 2>/dev/null || true
+	@echo "==> Building and pushing all images..."
 	docker build -t $(GATEWAY_IMG) gateway/
 	docker push $(GATEWAY_IMG)
-	@echo "==> Building and pushing builder..."
 	cp -r proto builder/proto
 	docker build -t $(BUILDER_IMG) builder/
 	rm -rf builder/proto
 	docker push $(BUILDER_IMG)
-	@echo "==> Building and pushing validator..."
 	docker build -t $(VALIDATOR_IMG) validator/
 	docker push $(VALIDATOR_IMG)
 	@echo "==> Deploying validator to Cloud Run..."
@@ -150,23 +156,36 @@ cloud-deploy:
 		--max-instances=3 \
 		--memory=256Mi \
 		--cpu=1
-	@echo "==> Building and pushing healthcheck sidecar..."
 	docker build -t $(HEALTHCHECK_IMG) healthcheck/
 	docker push $(HEALTHCHECK_IMG)
-	@echo "==> Building and pushing realtime..."
 	docker build -t $(REALTIME_IMG) realtime/
 	docker push $(REALTIME_IMG)
-	@echo "==> Building and pushing email worker..."
 	docker build -t $(EMAIL_IMG) email/
 	docker push $(EMAIL_IMG)
-	@echo "==> Building and pushing analytics..."
 	docker build -t $(ANALYTICS_IMG) analytics/
 	docker push $(ANALYTICS_IMG)
+	$(eval STATIC_GW_IP := $(shell gcloud compute addresses describe bifrost-gateway-ip --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(address)'))
+	$(eval STATIC_UI_IP := $(shell gcloud compute addresses describe bifrost-ui-ip --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(address)'))
+	$(eval VAL_URL := $(shell gcloud run services describe bifrost-validator --region=$(GCP_REGION) --project=$(GCP_PROJECT) --format='value(status.url)' 2>/dev/null))
+	@echo "  Gateway IP: $(STATIC_GW_IP)"
+	@echo "  UI IP:      $(STATIC_UI_IP)"
+	@echo "==> Creating ConfigMap..."
+	kubectl create configmap bifrost-config -n bifrost-apps \
+		--from-literal=database_url="host=$$(terraform -chdir=infra output -raw db_ip) user=bifrost password=BfrostPg2026x dbname=bifrost sslmode=disable" \
+		--from-literal=auth_callback_url="http://$(STATIC_GW_IP).nip.io" \
+		--from-literal=ui_url="http://$(STATIC_UI_IP).nip.io" \
+		--from-literal=validator_url="$(VAL_URL)" \
+		--from-literal=realtime_url="bifrost-realtime:50051" \
+		--from-literal=rabbitmq_url="amqp://bifrost:localdev@bifrost-rabbitmq:5672/" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Patching services with static IPs..."
+	kubectl patch svc bifrost-gateway -n bifrost-apps -p '{"spec":{"loadBalancerIP":"$(STATIC_GW_IP)"}}'
+	kubectl patch svc bifrost-ui -n bifrost-apps -p '{"spec":{"loadBalancerIP":"$(STATIC_UI_IP)"}}'
 	@echo "==> Applying K8s manifests..."
 	kubectl apply -f gateway/k8s/sa.yaml
 	kubectl apply -f gateway/k8s/rbac.yaml
-	kubectl apply -f gateway/k8s/deployment.yaml
 	kubectl apply -f gateway/k8s/service.yaml
+	kubectl apply -f gateway/k8s/deployment.yaml
 	kubectl apply -f builder/k8s/sa.yaml
 	kubectl apply -f builder/k8s/deployment.yaml
 	kubectl apply -f realtime/k8s/deployment.yaml
@@ -176,13 +195,15 @@ cloud-deploy:
 	kubectl apply -f email/k8s/deployment.yaml
 	kubectl apply -f analytics/k8s/deployment.yaml
 	kubectl apply -f analytics/k8s/service.yaml
-	@echo "==> Restarting deployments to pick up new images..."
+	@$(MAKE) ui-deploy
+	@echo "==> Restarting all deployments..."
 	kubectl rollout restart deployment/bifrost-gateway -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-builder -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-realtime -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-rabbitmq -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-email -n bifrost-apps
 	kubectl rollout restart deployment/bifrost-analytics -n bifrost-apps
+	kubectl rollout restart deployment/bifrost-ui -n bifrost-apps
 	@echo "==> Waiting for rollout..."
 	kubectl rollout status deployment/bifrost-rabbitmq -n bifrost-apps --timeout=600s
 	kubectl rollout status deployment/bifrost-gateway -n bifrost-apps --timeout=180s
@@ -190,7 +211,17 @@ cloud-deploy:
 	kubectl rollout status deployment/bifrost-realtime -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-email -n bifrost-apps --timeout=180s
 	kubectl rollout status deployment/bifrost-analytics -n bifrost-apps --timeout=180s
+	kubectl rollout status deployment/bifrost-ui -n bifrost-apps --timeout=180s
 	@echo "==> All services deployed."
+	@echo ""
+	@echo "=== URLs ==="
+	@echo "  Gateway: http://$(STATIC_GW_IP).nip.io"
+	@echo "  UI:      http://$(STATIC_UI_IP).nip.io"
+	@echo ""
+	@echo "=== OAuth Redirect URIs (set once in Google/GitHub console) ==="
+	@echo "  Google authorized redirect URI: http://$(STATIC_GW_IP).nip.io/api/v1/auth/google/callback"
+	@echo "  GitHub callback URL:            http://$(STATIC_GW_IP).nip.io/api/v1/auth/github/callback"
+	@echo ""
 	@echo "=== Pod Status ==="
 	@kubectl get pods -n bifrost-apps
 	@echo "=== Services ==="
@@ -198,3 +229,32 @@ cloud-deploy:
 
 cloud-psql:
 	PGPASSWORD='BfrostPg2026x' psql -h $$(terraform -chdir=infra output -raw db_ip) -U bifrost -d bifrost
+
+# --- UI ---
+
+ui-dev:
+	cd ui && npm run dev
+
+ui-build:
+	cd ui && npm run build
+
+ui-preview:
+	cd ui && npm run preview
+
+UI_URL = $(shell kubectl get svc bifrost-ui -n bifrost-apps -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+
+ui-deploy:
+	@echo "==> Building UI image..."
+	docker build -t $(UI_IMG) \
+		--build-arg VITE_API_URL=http://$(GATEWAY_URL).nip.io/api/v1 \
+		--build-arg VITE_ANALYTICS_URL=http://$(ANALYTICS_URL) \
+		ui/
+	@echo "==> Pushing UI image..."
+	docker push $(UI_IMG)
+	@echo "==> Deploying UI to GKE..."
+	kubectl apply -f ui/k8s/deployment.yaml
+	kubectl apply -f ui/k8s/service.yaml
+	kubectl rollout restart deployment/bifrost-ui -n bifrost-apps
+	kubectl rollout status deployment/bifrost-ui -n bifrost-apps --timeout=180s
+	@echo "==> UI deployed. Getting external IP (may take a minute)..."
+	@kubectl get svc bifrost-ui -n bifrost-apps
