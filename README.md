@@ -5,7 +5,7 @@
 <h1 align="center">Bifrost</h1>
 
 <p align="center">
-  Self-service internal developer platform on GCP.
+  Software deployment platform on GCP.
 </p>
 
 <p align="center">
@@ -21,15 +21,33 @@
 
 ## Introduction
 
-Bifrost is a self-service internal developer platform. A developer pushes code to GitHub, and Bifrost automatically builds a container image, deploys it to Kubernetes, assigns a URL, and monitors it.
+Bifrost is a self-service internal developer platform. A developer pushes code to GitHub, and Bifrost automatically builds a container image, deploys it to Kubernetes, assigns a URL, and monitors it. The developer sees the entire lifecycle — build logs streaming in real-time, deployment status, health checks — through a dashboard and CLI.
+The system is a polyglot state machine. Every deployment follows a strict transition sequence:
 
-The system is a polyglot state machine — every deployment follows `queued → validating → building → built → deploying → running → healthy`, with each service responsible for advancing or observing specific transitions.
+```bash
+queued → validating → building → built → deploying → running → healthy
+```
+
+Any state can transition to `failed`, and `failed` can retry back to `queued`. Each service in the platform is responsible for either advancing or observing specific transitions in this pipeline. Valid transitions are enforced at the data layer, making invalid state changes impossible.
 
 ## Architecture
 
 <p align="center">
   <img src="res/architecture.png" alt="Architecture">
 </p>
+
+## How It Works
+
+1. **GitHub sends a webhook** to the Go gateway with the repo URL, commit SHA, and branch. Alternatively, you can also send a POST request to the Gateway for adding your project and later publishing it.
+2. **The gateway verifies the HMAC signature**, looks up the project, and fetches `deploy.toml` from the repo at that exact commit.
+3. **The OCaml validator** parses the TOML config, type-checks all fields, and validates resource formats. Invalid configs are rejected with structured errors.
+4. **The gateway creates a deployment record** (status `queued`) and publishes a build request to Pub/Sub.
+5. **The Rust builder** clones the repo at the commit SHA, builds an image with Cloud Build, pushes it to Artifact Registry, and streams build logs to Elixir in real-time.
+6. **The gateway receives a build-complete event**, generates Kubernetes manifests from the validated config, and applies them to GKE — including the Zig health sidecar.
+7. **The Zig sidecar** starts in every pod, runs TCP health probes, reads `/proc` for CPU/memory/file descriptors, and reports metrics back to the gateway via gRPC.
+8. **Elixir broadcasts** every event from steps 2–7 over WebSocket to dashboard and CLI clients.
+9. **Lua scripts** embedded in the gateway handle traffic routing: rate limiting, A/B splits, header transformations — hot-reloaded from Cloud Storage without redeploying.
+10. **Python analytics** run as scheduled jobs, pulling metrics from Cloud Monitoring, computing per-app costs, running anomaly detection, and writing results to BigQuery.
 
 ## Services
 
@@ -45,7 +63,32 @@ The system is a polyglot state machine — every deployment follows `queued → 
 | **CLI** | Go | Command-line interface for platform management |
 | **UI** | SvelteKit | Web dashboard |
 
-Communication: sync gRPC/HTTP for immediate calls, async Pub/Sub for long-running work.
+### Communication Patterns
+
+**Synchronous (gRPC/HTTP)** — used when the caller needs an answer immediately:
+- Go → OCaml: validate config before proceeding
+- Go ↔ Zig: health metric streaming from sidecars
+- Rust → Elixir: streaming build logs in real-time
+
+**Asynchronous (Pub/Sub)** — used for long-running work that needs retry safety:
+- Go → Rust: build requests
+- Rust → Go: build complete notifications
+- Go → Elixir: deployment events
+
+**WebSocket** — push updates to clients:
+- Elixir → Dashboard/CLI: real-time event stream
+
+### Why These Languages
+
+Each language is chosen for a specific technical advantage, not variety for its own sake:
+
+- **Go** — stdlib HTTP/gRPC, client-go for Kubernetes, single static binary, goroutines for concurrency
+- **Rust** — handles untrusted user code safely, no GC pauses during builds, deterministic resource cleanup
+- **OCaml** — algebraic data types for the config AST, pattern matching for validation rules, type system prevents constructing invalid configs
+- **Elixir** — BEAM handles millions of concurrent WebSocket connections at ~2KB each, OTP supervisors auto-restart crashed processes
+- **Zig** — tiny static binary (< 500KB), zero runtime overhead, direct syscall access for `/proc` reading, < 5MB memory per sidecar
+- **Lua** — same embedded scripting pattern as OpenResty/Nginx/Kong, sandboxable, hot-reloadable
+- **Python** — pandas, BigQuery SDK, mature data ecosystem for analytics
 
 ## Project Structure
 
@@ -55,16 +98,28 @@ Communication: sync gRPC/HTTP for immediate calls, async Pub/Sub for long-runnin
 ├── validator/         # OCaml — project config validation
 ├── realtime/          # Elixir — WebSocket state broadcasts
 ├── healthcheck/       # Zig — deployment health sidecar
-├── lua-scripts/       # Lua — dynamic routing rules
 ├── analytics/         # Python — deployment analytics
 ├── cli/               # Go — CLI tool
 ├── ui/                # SvelteKit — web dashboard
 ├── infra/             # Terraform — GCP infrastructure
-├── proto/             # Protobuf definitions
-├── ops/               # Operational tooling
+├── proto/             # Protobuf service definitions
+├── ops/               # Runbooks and SLO definitions
 ├── scripts/           # Development and deployment scripts
-└── tests/             # Integration tests
 ```
+
+## GCP Infrastructure
+
+| Service | Purpose |
+|---------|---------|
+| GKE Autopilot | Deployed apps, Rust builder, Elixir WebSocket server |
+| Cloud Run | Go API, OCaml validator, Python analytics jobs |
+| Pub/Sub | Async messaging with dead letter queues |
+| Artifact Registry | Built container images                               |
+| Cloud Storage | Build artifacts, Lua scripts, source archives |
+| Cloud Build | CI/CD for Bifrost itself |
+| Cloud Monitoring | Observability and alerting |
+
+All infrastructure is defined as Terraform in `infra/`.
 
 ## Development
 
@@ -103,13 +158,35 @@ make infra-plan      # Terraform plan
 make infra-apply     # Terraform apply
 ```
 
-### Environment Variables
+## User Configuration
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `BF_PORT` | `8080` | Gateway listen port |
-| `BF_ENV` | `dev` | Environment name |
-| `BF_DATABASE_URL` | `postgres://bifrost:localdev@localhost:5432/bifrost?sslmode=disable` | Postgres connection |
+Developers configure their deployments with a `deploy.toml` file in their repository:
+
+```toml
+[app]
+name = "my-api"
+runtime = "docker"
+
+[scaling]
+min_replicas = 2
+max_replicas = 10
+cpu_target = 70
+
+[health]
+path = "/healthz"
+interval = "30s"
+timeout = "5s"
+
+[resources]
+cpu = "500m"
+memory = "256Mi"
+
+[env]
+DATABASE_URL = { secret = "db-connection-string" }
+LOG_LEVEL = "info"
+```
+
+The OCaml validator parses this file, type-checks every field, and returns structured errors with line numbers if anything is wrong. Valid configs are snapshotted with the deployment record so the exact configuration is always reproducible.
 
 ## License
 
