@@ -121,7 +121,7 @@ Each language is chosen for a specific technical advantage, not variety for its 
 ├── realtime/          # Elixir — WebSocket state broadcasts
 ├── healthcheck/       # Zig — deployment health sidecar
 ├── analytics/         # Python — deployment analytics
-├── cli/               # Go — CLI tool
+├── cli/               # Rust — CLI tool
 ├── ui/                # SvelteKit — web dashboard
 ├── infra/             # Terraform — GCP infrastructure
 ├── proto/             # Protobuf service definitions
