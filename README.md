@@ -21,6 +21,8 @@
 
 ## Introduction
 
+I came up with this project because I wanted a simple way to deploy my apps and have them instantly available. 
+
 Bifrost is a self-service internal developer platform. A developer pushes code to GitHub, and Bifrost automatically builds a container image, deploys it to Kubernetes, assigns a URL, and monitors it. The developer sees the entire lifecycle — build logs streaming in real-time, deployment status, health checks — through a dashboard and CLI.
 The system is a polyglot state machine. Every deployment follows a strict transition sequence:
 
@@ -60,7 +62,7 @@ Any state can transition to `failed`, and `failed` can retry back to `queued`. E
 | **Healthcheck** | Zig | Sidecar that monitors running deployments |
 | **Lua Scripts** | Lua | Embedded in Gateway, modifies routing behavior |
 | **Analytics** | Python | Analyzes historical deployment data |
-| **CLI** | Go | Command-line interface for platform management |
+| **CLI** | Rust | Command-line interface for platform management |
 | **UI** | SvelteKit | Web dashboard |
 
 ### Communication Patterns
