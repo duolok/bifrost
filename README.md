@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/Rust-Builder-DEA584?logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/OCaml-Validator-EC6813?logo=ocaml&logoColor=white" alt="OCaml">
   <img src="https://img.shields.io/badge/Elixir-Realtime-4B275F?logo=elixir&logoColor=white" alt="Elixir">
+  <img src="https://img.shields.io/badge/Python-Analytics-3776AB?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Zig-Healthcheck-F7A41D?logo=zig&logoColor=white" alt="Zig">
   <img src="https://img.shields.io/badge/GCP-Cloud-4285F4?logo=googlecloud&logoColor=white" alt="GCP">
 </p>
