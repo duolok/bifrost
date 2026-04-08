@@ -19,6 +19,25 @@
 
 ---
 
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Architecture](#architecture)
+- [How It Works](#how-it-works)
+- [Services](#services)
+  - [Communication Patterns](#communication-patterns)
+  - [Why These Languages](#why-these-languages)
+- [Project Structure](#project-structure)
+- [GCP Infrastructure](#gcp-infrastructure)
+- [Development](#development)
+- [Running](#running)
+  - [Local Environment](#local-environment)
+  - [Run the Gateway](#run-the-gateway)
+  - [Database](#database)
+  - [Infrastructure](#infrastructure)
+- [User Configuration](#user-configuration)
+- [License](#license)
+
 ## Introduction
 
 I came up with this project because I wanted a simple way to deploy my apps and have them instantly available. 
@@ -131,6 +150,16 @@ All infrastructure is defined as Terraform in `infra/`.
 - [Docker Compose](https://docs.docker.com/compose/install/) (version 2.0+)
 - [Go](https://golang.org/dl/) (1.25+)
 
+## Running
+
+To bootstrap the entire project, simply run:
+```bash
+make infra-apply     
+make cloud-up
+```
+
+This will use Terraform to setup all the infrastructure and deploy Bifrost on GCP.
+
 ### Local Environment
 
 ```bash
@@ -156,7 +185,6 @@ make psql            # open Postgres shell
 ### Infrastructure
 
 ```bash
-make infra-plan      # Terraform plan
 make infra-apply     # Terraform apply
 ```
 
@@ -166,12 +194,12 @@ Developers configure their deployments with a `deploy.toml` file in their reposi
 
 ```toml
 [app]
-name = "my-api"
-runtime = "docker"
+name = "bifrost-test"
+runtime = "go"
 
 [scaling]
-min_replicas = 2
-max_replicas = 10
+min_replicas = 1
+max_replicas = 3
 cpu_target = 70
 
 [health]
@@ -180,11 +208,10 @@ interval = "30s"
 timeout = "5s"
 
 [resources]
-cpu = "500m"
-memory = "256Mi"
+cpu = "250m"
+memory = "128Mi"
 
 [env]
-DATABASE_URL = { secret = "db-connection-string" }
 LOG_LEVEL = "info"
 ```
 
